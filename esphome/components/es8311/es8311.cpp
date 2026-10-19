@@ -4,14 +4,15 @@
 #include "esphome/core/log.h"
 #include <cinttypes>
 
-namespace esphome::es8311 {
+namespace esphome {
+namespace es8311 {
 
-ESPHOME_LOG_TAG(TAG, "es8311");
+static const char *const TAG = "es8311";
 
 // Mark the component as failed; use only in setup
 #define ES8311_ERROR_FAILED(func) \
   if (!(func)) { \
-    this->mark_failed(LOG_STR("Failed to initialize")); \
+    this->mark_failed(); \
     return; \
   }
 // Return false; use outside of setup
@@ -56,6 +57,11 @@ void ES8311::dump_config() {
                 "  DAC Bits per Sample: %" PRIu8 "\n"
                 "  Sample Rate: %" PRIu32,
                 YESNO(this->use_mclk_), YESNO(this->use_mic_), this->resolution_out_, this->sample_frequency_);
+
+  if (this->is_failed()) {
+    ESP_LOGCONFIG(TAG, "  Failed to initialize!");
+    return;
+  }
 }
 
 bool ES8311::set_volume(float volume) {
@@ -87,21 +93,6 @@ uint8_t ES8311::calculate_resolution_value(ES8311Resolution resolution) {
   }
 }
 
-/// Encodes the MCLK pre-multiplier for REG02 bits 3-4. The coefficient table stores the multiplier as the factor
-/// itself (1, 2, 4 or 8), while the register takes 0, 1, 2 or 3 (ES8311 datasheet, register 0x02 MULT_PRE).
-static uint8_t encode_pre_mult(uint8_t pre_mult) {
-  switch (pre_mult) {
-    case 2:
-      return 1;
-    case 4:
-      return 2;
-    case 8:
-      return 3;
-    default:
-      return 0;
-  }
-}
-
 const ES8311Coefficient *ES8311::get_coefficient(uint32_t mclk, uint32_t rate) {
   for (const auto &coefficient : ES8311_COEFFICIENTS) {
     if (coefficient.mclk == mclk && coefficient.rate == rate)
@@ -117,7 +108,7 @@ bool ES8311::configure_clock_() {
   uint32_t mclk_frequency = this->sample_frequency_ * this->mclk_multiple_;
   if (!this->use_mclk_) {
     reg01 |= BIT(7);  // Use SCLK
-    mclk_frequency = this->sample_frequency_ * (int) this->resolution_out_ * 2;
+    // mclk_frequency = this->sample_frequency_ * (int) this->resolution_out_ * 2;
   }
   if (this->mclk_inverted_) {
     reg01 |= BIT(6);  // Invert MCLK pin
@@ -137,7 +128,35 @@ bool ES8311::configure_clock_() {
   ES8311_ERROR_CHECK(this->read_byte(ES8311_REG02_CLK_MANAGER, &reg02));
   reg02 &= 0x07;
   reg02 |= (coefficient->pre_div - 1) << 5;
-  reg02 |= encode_pre_mult(coefficient->pre_mult) << 3;
+
+  uint8_t datmp;
+  switch (coefficient->pre_mult) {
+        case 1:
+            datmp = 0;
+            break;
+        case 2:
+            datmp = 1;
+            break;
+        case 4:
+            datmp = 2;
+            break;
+        case 8:
+            datmp = 3;
+            break;
+        default:
+            break;
+  }
+
+  if (!this->use_mclk_) {
+    datmp = 3;
+    if ( this->sample_frequency_ == 8000 ) {
+      /* When the sample rate is 8kHz, BCLK requires at least 512K (slot bit needs to be configured to 32bit).
+                DIG_MCLK = LRCK * 256 = BCLK * 4 */
+      datmp = 2;
+    }
+  }
+
+  reg02 |= datmp << 3;
   ES8311_ERROR_CHECK(this->write_byte(ES8311_REG02_CLK_MANAGER, reg02));
 
   // Register 0x03
@@ -232,4 +251,5 @@ bool ES8311::set_mute_state_(bool mute_state) {
   return this->write_byte(ES8311_REG31_DAC, reg31);
 }
 
-}  // namespace esphome::es8311
+}  // namespace es8311
+}  // namespace esphome

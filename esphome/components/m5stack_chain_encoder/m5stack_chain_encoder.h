@@ -1,0 +1,99 @@
+#pragma once
+
+#include "esphome/core/component.h"
+#include "esphome/components/uart/uart.h"
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
+
+namespace esphome {
+namespace m5stack_chain_encoder {
+
+enum ChainStatus : uint8_t {
+  CHAIN_OK = 0x00,
+  CHAIN_PARAMETER_ERROR = 0x01,
+  CHAIN_RETURN_PACKET_ERROR = 0x02,
+  CHAIN_BUSY = 0x04,
+  CHAIN_TIMEOUT = 0x05,
+};
+
+enum EncoderCommand : uint8_t {
+  CHAIN_ENCODER_GET_VALUE = 0x10,
+};
+
+// Button command (shared with other Chain button devices)
+static const uint8_t CHAIN_BUTTON_GET_STATUS = 0xE1;
+
+// Common RGB LED commands (shared by all Chain devices)
+static const uint8_t CHAIN_SET_RGB_VALUE = 0x20;
+static const uint8_t CHAIN_GET_RGB_VALUE = 0x21;
+static const uint8_t CHAIN_SET_RGB_LIGHT = 0x22;
+
+// 协议常量
+static const uint8_t PACK_HEAD_HIGH = 0xAA;
+static const uint8_t PACK_HEAD_LOW = 0x55;
+static const uint8_t PACK_END_HIGH = 0x55;
+static const uint8_t PACK_END_LOW = 0xAA;
+
+static const uint8_t PACK_SIZE_MIN = 0x09;
+
+static const uint16_t RECEIVE_BUFFER_SIZE = 1024;
+static const uint16_t SEND_BUFFER_SIZE = 256;
+static const uint16_t CMD_BUFFER_SIZE = 256;
+
+static const uint32_t TIMEOUT_MS = 1;
+
+class ChainEncoderSensor : public sensor::Sensor,
+                           public PollingComponent,
+                           public uart::UARTDevice {
+ public:
+  void set_device_id(uint8_t id) { this->device_id_ = id; }
+
+  void set_button_sensor(binary_sensor::BinarySensor *button) { this->button_sensor_ = button; }
+
+    // Set onboard LED brightness (0-100)
+    ChainStatus set_led_brightness(uint8_t brightness, uint8_t *operation_status = nullptr);
+
+  // Set onboard RGB color
+  ChainStatus set_rgb_color(uint8_t r, uint8_t g, uint8_t b, uint8_t *operation_status = nullptr);
+  // Get onboard RGB color
+  ChainStatus get_rgb_color(uint8_t *r, uint8_t *g, uint8_t *b, uint8_t *operation_status = nullptr);
+
+  void setup() override;
+  void update() override;
+
+ protected:
+  ChainStatus get_encoder_value_(uint8_t id, int16_t *value, uint32_t timeout_ms = 100);
+  ChainStatus get_button_status_(uint8_t id, uint8_t *status, uint32_t timeout_ms = 100);
+  bool acquire_mutex_();
+  void release_mutex_();
+
+  void send_packet_(uint16_t id, uint8_t cmd, const uint8_t *buffer, uint16_t size);
+  bool wait_for_data_(uint16_t id, uint8_t cmd, uint32_t timeout_ms);
+
+  void read_buffer_();
+  bool process_buffer_data_(uint16_t id, uint8_t cmd);
+
+  bool check_packet_(const uint8_t *buffer, uint16_t size) const;
+  uint8_t calculate_crc_(const uint8_t *buffer, uint16_t size) const;
+
+  uint8_t device_id_{1};
+
+  binary_sensor::BinarySensor *button_sensor_{nullptr};
+
+  bool mutex_locked_{false};
+
+  uint8_t cmd_buffer_[CMD_BUFFER_SIZE] = {0};
+  uint16_t cmd_buffer_size_{0};
+
+  uint8_t return_packet_[CMD_BUFFER_SIZE] = {0};
+  uint16_t return_packet_size_{0};
+
+  uint8_t receive_buffer_[RECEIVE_BUFFER_SIZE] = {0};
+  uint16_t receive_buffer_size_{0};
+
+  uint8_t send_buffer_[SEND_BUFFER_SIZE] = {0};
+  uint16_t send_buffer_size_{0};
+};
+
+}  // namespace m5stack_chain_encoder
+}  // namespace esphome

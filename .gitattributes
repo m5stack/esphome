@@ -3,3 +3,6 @@
 *.png binary
 *.gif binary
 *.apng binary
+
+# Preserve migrated component datasheets byte-for-byte
+esphome/components/**/*.pdf binary
