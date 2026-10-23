@@ -1,3 +1,7 @@
+from pathlib import Path
+from typing import Any
+
+from esphome import external_files
 import esphome.codegen as cg
 from esphome.components import display, globals as globals_component
 import esphome.config_validation as cv
@@ -44,6 +48,21 @@ def validate_phase_mapping(config: ConfigType) -> ConfigType:
     return config
 
 
+def validate_animation_file(value: Any) -> Path | str:
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        return cv.url(value)
+    return cv.file_(value)
+
+
+def download_remote_animations(config: ConfigType) -> ConfigType:
+    for key, value in config.items():
+        if isinstance(value, str):
+            path = external_files.compute_local_file_path(DOMAIN, value)
+            external_files.download_content(value, path, return_content=False)
+            config[key] = path
+    return config
+
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(M5Atoms3VoiceUI),
@@ -65,12 +84,18 @@ CONFIG_SCHEMA = cv.Schema(
             ),
             validate_phase_mapping,
         ),
-        cv.Required(CONF_ANIMATIONS): cv.Schema(
-            {
-                **{cv.Required(key): cv.file_ for key in REQUIRED_ANIMATIONS},
-                cv.Optional("muted"): cv.file_,
-                cv.Optional("timer_finished"): cv.file_,
-            }
+        cv.Required(CONF_ANIMATIONS): cv.All(
+            cv.Schema(
+                {
+                    **{
+                        cv.Required(key): validate_animation_file
+                        for key in REQUIRED_ANIMATIONS
+                    },
+                    cv.Optional("muted"): validate_animation_file,
+                    cv.Optional("timer_finished"): validate_animation_file,
+                }
+            ),
+            download_remote_animations,
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
