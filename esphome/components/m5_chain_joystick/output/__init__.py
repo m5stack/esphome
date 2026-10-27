@@ -1,43 +1,27 @@
 import esphome.codegen as cg
-import esphome.config_validation as cv
 from esphome.components import output
-from esphome.const import CONF_ID, CONF_CHANNEL
+from esphome.components.m5_chain_base.output import CHANNEL_MAP, M5ChainLedOutput
+import esphome.config_validation as cv
+from esphome.const import CONF_CHANNEL, CONF_ID
 
-from .. import m5stack_chain_joystick_ns, ChainJoystickSensor
+from .. import M5ChainJoystick
 
 CODEOWNERS = ["@Jasionf"]
+DEPENDENCIES = ["m5_chain_joystick"]
 
-ChainJoystickLedOutput = m5stack_chain_joystick_ns.class_(
-    "ChainJoystickLedOutput",
-    output.FloatOutput,
-)
-
-LedChannel = m5stack_chain_joystick_ns.enum("LedChannel", is_class=True)
-
-CONF_CHAIN_JOYSTICK_ID = "chain_joystick_id"
-
-CHANNEL_MAP = {
-    "led_brightness": LedChannel.LED_BRIGHTNESS,
-    "rgb_brightness": LedChannel.RGB_BRIGHTNESS,
-    "rgb_red": LedChannel.RGB_RED,
-    "rgb_green": LedChannel.RGB_GREEN,
-    "rgb_blue": LedChannel.RGB_BLUE,
-}
+CONF_M5_CHAIN_JOYSTICK_ID = "m5_chain_joystick_id"
 
 CONFIG_SCHEMA = output.FLOAT_OUTPUT_SCHEMA.extend(
     {
-        cv.Required(CONF_ID): cv.declare_id(ChainJoystickLedOutput),
+        cv.Required(CONF_ID): cv.declare_id(M5ChainLedOutput),
         cv.Required(CONF_CHANNEL): cv.enum(CHANNEL_MAP),
-        cv.GenerateID(CONF_CHAIN_JOYSTICK_ID): cv.use_id(ChainJoystickSensor),
+        cv.GenerateID(CONF_M5_CHAIN_JOYSTICK_ID): cv.use_id(M5ChainJoystick),
     }
 )
 
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_parented(var, config[CONF_M5_CHAIN_JOYSTICK_ID])
     await output.register_output(var, config)
-
-    parent = await cg.get_variable(config[CONF_CHAIN_JOYSTICK_ID])
-    cg.add(var.set_parent(parent))
-    cg.add(var.set_channel(config[CONF_CHANNEL]))
     cg.add(var.set_channel(CHANNEL_MAP[config[CONF_CHANNEL]]))

@@ -1,0 +1,31 @@
+m5_chain_tof:
+  id: chain_tof
+  uart_id: uart_bus
+  chain_index: 2
+  update_interval: 250ms
+
+sensor:
+  - platform: m5_chain_tof
+    m5_chain_tof_id: chain_tof
+    name: Chain ToF Distance
+
+output:
+  - platform: m5_chain_tof
+    id: chain_tof_red
+    m5_chain_tof_id: chain_tof
+    channel: rgb_red
+  - platform: m5_chain_tof
+    id: chain_tof_green
+    m5_chain_tof_id: chain_tof
+    channel: rgb_green
+  - platform: m5_chain_tof
+    id: chain_tof_blue
+    m5_chain_tof_id: chain_tof
+    channel: rgb_blue
+
+light:
+  - platform: rgb
+    name: Chain ToF RGB
+    red: chain_tof_red
+    green: chain_tof_green
+    blue: chain_tof_blue

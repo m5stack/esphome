@@ -1,0 +1,29 @@
+import esphome.codegen as cg
+from esphome.components import binary_sensor
+import esphome.config_validation as cv
+from esphome.types import ConfigType
+
+from .. import M5ChainSwitch, m5_chain_switch_ns
+
+DEPENDENCIES = ["m5_chain_switch"]
+
+CONF_M5_CHAIN_SWITCH_ID = "m5_chain_switch_id"
+
+M5ChainSwitchBinarySensor = m5_chain_switch_ns.class_(
+    "M5ChainSwitchBinarySensor",
+    binary_sensor.BinarySensor,
+    cg.Parented.template(M5ChainSwitch),
+)
+
+CONFIG_SCHEMA = binary_sensor.binary_sensor_schema(M5ChainSwitchBinarySensor).extend(
+    {
+        cv.GenerateID(CONF_M5_CHAIN_SWITCH_ID): cv.use_id(M5ChainSwitch),
+    }
+)
+
+
+async def to_code(config: ConfigType) -> None:
+    var = await binary_sensor.new_binary_sensor(config)
+    hub = await cg.get_variable(config[CONF_M5_CHAIN_SWITCH_ID])
+    await cg.register_parented(var, hub)
+    cg.add(hub.set_status_sensor(var))

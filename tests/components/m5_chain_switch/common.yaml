@@ -1,0 +1,58 @@
+m5_chain_switch:
+  id: chain_switch
+  uart_id: uart_bus
+  chain_index: 1
+  update_interval: 250ms
+
+switch:
+  - platform: m5_chain_switch
+    m5_chain_switch_id: chain_switch
+    name: Chain Switch Event Trigger
+
+sensor:
+  - platform: m5_chain_switch
+    m5_chain_switch_id: chain_switch
+    type: adc_12
+    name: Chain Switch ADC
+  - platform: m5_chain_switch
+    m5_chain_switch_id: chain_switch
+    type: adc_8
+    name: Chain Switch ADC 8-bit
+  - platform: m5_chain_switch
+    m5_chain_switch_id: chain_switch
+    type: change_mode
+    name: Chain Switch Change Mode
+  - platform: m5_chain_switch
+    m5_chain_switch_id: chain_switch
+    type: open_threshold
+    name: Chain Switch Open Threshold
+  - platform: m5_chain_switch
+    m5_chain_switch_id: chain_switch
+    type: close_threshold
+    name: Chain Switch Close Threshold
+
+binary_sensor:
+  - platform: m5_chain_switch
+    m5_chain_switch_id: chain_switch
+    name: Chain Switch Status
+
+output:
+  - platform: m5_chain_switch
+    id: chain_switch_red
+    m5_chain_switch_id: chain_switch
+    channel: rgb_red
+  - platform: m5_chain_switch
+    id: chain_switch_green
+    m5_chain_switch_id: chain_switch
+    channel: rgb_green
+  - platform: m5_chain_switch
+    id: chain_switch_blue
+    m5_chain_switch_id: chain_switch
+    channel: rgb_blue
+
+light:
+  - platform: rgb
+    name: Chain Switch RGB
+    red: chain_switch_red
+    green: chain_switch_green
+    blue: chain_switch_blue

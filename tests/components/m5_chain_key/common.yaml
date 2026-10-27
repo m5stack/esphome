@@ -1,0 +1,44 @@
+m5_chain_key:
+  id: chain_key
+  uart_id: uart_bus
+  chain_index: 1
+  update_interval: 250ms
+
+binary_sensor:
+  - platform: m5_chain_key
+    m5_chain_key_id: chain_key
+    name: Chain Key
+    on_press:
+      - logger.log: "Chain Key pressed"
+    on_release:
+      - logger.log: "Chain Key released"
+    on_click:
+      - logger.log: "Chain Key clicked"
+    on_double_click:
+      - logger.log: "Chain Key double clicked"
+    on_multi_click:
+      - timing:
+          - ON for at least 3s
+        then:
+          - logger.log: "Chain Key long pressed"
+
+output:
+  - platform: m5_chain_key
+    id: chain_key_red
+    chain_key_id: chain_key
+    channel: rgb_red
+  - platform: m5_chain_key
+    id: chain_key_green
+    chain_key_id: chain_key
+    channel: rgb_green
+  - platform: m5_chain_key
+    id: chain_key_blue
+    chain_key_id: chain_key
+    channel: rgb_blue
+
+light:
+  - platform: rgb
+    name: Chain Key RGB
+    red: chain_key_red
+    green: chain_key_green
+    blue: chain_key_blue

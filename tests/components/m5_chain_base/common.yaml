@@ -1,0 +1,4 @@
+m5_chain_base:
+  id: m5_chain_base_test
+  uart_id: uart_bus
+  update_interval: 250ms

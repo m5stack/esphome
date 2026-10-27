@@ -1,0 +1,45 @@
+m5_chain_encoder:
+  id: chain_encoder
+  uart_id: uart_bus
+  chain_index: 1
+  update_interval: 250ms
+
+sensor:
+  - platform: m5_chain_encoder
+    m5_chain_encoder_id: chain_encoder
+    type: value
+    name: Chain Encoder Value
+  - platform: m5_chain_encoder
+    m5_chain_encoder_id: chain_encoder
+    type: increment
+    name: Chain Encoder Increment
+  - platform: m5_chain_encoder
+    m5_chain_encoder_id: chain_encoder
+    type: ab_status
+    name: Chain Encoder Direction
+
+binary_sensor:
+  - platform: m5_chain_encoder
+    m5_chain_encoder_id: chain_encoder
+    name: Chain Encoder Button
+
+output:
+  - platform: m5_chain_encoder
+    id: chain_encoder_red
+    m5_chain_encoder_id: chain_encoder
+    channel: rgb_red
+  - platform: m5_chain_encoder
+    id: chain_encoder_green
+    m5_chain_encoder_id: chain_encoder
+    channel: rgb_green
+  - platform: m5_chain_encoder
+    id: chain_encoder_blue
+    m5_chain_encoder_id: chain_encoder
+    channel: rgb_blue
+
+light:
+  - platform: rgb
+    name: Chain Encoder RGB
+    red: chain_encoder_red
+    green: chain_encoder_green
+    blue: chain_encoder_blue

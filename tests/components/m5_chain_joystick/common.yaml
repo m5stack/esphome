@@ -1,0 +1,58 @@
+m5_chain_joystick:
+  id: chain_joystick
+  uart_id: uart_bus
+  chain_index: 2
+  update_interval: 250ms
+
+sensor:
+  - platform: m5_chain_joystick
+    m5_chain_joystick_id: chain_joystick
+    type: adc_16
+    axis: x
+    name: Chain Joystick ADC X
+  - platform: m5_chain_joystick
+    m5_chain_joystick_id: chain_joystick
+    type: adc_8
+    axis: y
+    name: Chain Joystick ADC Y 8-bit
+  - platform: m5_chain_joystick
+    m5_chain_joystick_id: chain_joystick
+    type: mapped_int16
+    axis: x
+    name: Chain Joystick Mapped X
+  - platform: m5_chain_joystick
+    m5_chain_joystick_id: chain_joystick
+    type: mapped_int8
+    axis: y
+    name: Chain Joystick Mapped Y 8-bit
+  - platform: m5_chain_joystick
+    m5_chain_joystick_id: chain_joystick
+    type: mapping_range
+    range_index: 0
+    name: Chain Joystick Mapping Range X Negative Min
+
+binary_sensor:
+  - platform: m5_chain_joystick
+    m5_chain_joystick_id: chain_joystick
+    name: Chain Joystick Button
+
+output:
+  - platform: m5_chain_joystick
+    id: chain_joystick_red
+    m5_chain_joystick_id: chain_joystick
+    channel: rgb_red
+  - platform: m5_chain_joystick
+    id: chain_joystick_green
+    m5_chain_joystick_id: chain_joystick
+    channel: rgb_green
+  - platform: m5_chain_joystick
+    id: chain_joystick_blue
+    m5_chain_joystick_id: chain_joystick
+    channel: rgb_blue
+
+light:
+  - platform: rgb
+    name: Chain Joystick RGB
+    red: chain_joystick_red
+    green: chain_joystick_green
+    blue: chain_joystick_blue
