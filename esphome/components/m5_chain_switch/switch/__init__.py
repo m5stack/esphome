@@ -3,11 +3,9 @@ from esphome.components import switch
 import esphome.config_validation as cv
 from esphome.types import ConfigType
 
-from .. import M5ChainSwitch, m5_chain_switch_ns
+from .. import CONF_M5_CHAIN_SWITCH_ID, M5ChainSwitch, m5_chain_switch_ns
 
 DEPENDENCIES = ["m5_chain_switch"]
-
-CONF_M5_CHAIN_SWITCH_ID = "m5_chain_switch_id"
 
 # The writable switch controls the device's 0xE1/0xE2 event-report setting. The
 # slider's actual state is reported asynchronously by the device as 0xE0.

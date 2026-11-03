@@ -26,10 +26,6 @@ static constexpr uint8_t SWITCH_EVENT_REPORT_TYPE = 0x04;
 
 void M5ChainSwitch::setup() {
   ESP_LOGCONFIG(TAG, "Setting up M5Stack Chain Switch (chain_index=%u)...", this->get_chain_index());
-  if (this->is_update_interval_enabled()) {
-    this->set_interval(EVENT_TRIGGER_POLL_INTERVAL_ID, this->get_update_interval(), [this]() { this->poll_next_(); });
-    this->poll_next_();
-  }
 }
 
 void M5ChainSwitch::dump_config() {
@@ -220,7 +216,6 @@ void M5ChainSwitch::on_request_timeout(uint8_t index, uint8_t command) {
     this->timeout_warning_active_ = true;
   }
   this->status_set_warning();
-  this->poll_next_();
 }
 
 void M5ChainSwitch::handle_status_report_(const m5_chain_base::ChainFrame &frame) {
@@ -235,7 +230,7 @@ void M5ChainSwitch::handle_status_report_(const m5_chain_base::ChainFrame &frame
   this->status_clear_warning();
 }
 
-void M5ChainSwitch::handle_response_(const m5_chain_base::ChainFrame &frame, uint8_t slot, bool continue_polling) {
+void M5ChainSwitch::handle_response_(const m5_chain_base::ChainFrame &frame, uint8_t slot, bool is_request_response) {
   bool valid = false;
   if (frame.command == SWITCH_COMMAND_GET_STATUS) {
     if (frame.data_size >= 1) {
@@ -269,10 +264,8 @@ void M5ChainSwitch::handle_response_(const m5_chain_base::ChainFrame &frame, uin
   } else {
     this->status_set_warning();
   }
-  if (continue_polling) {
+  if (is_request_response)
     this->send_pending_rgb_();
-    this->poll_next_();
-  }
 }
 
 }  // namespace esphome::m5_chain_switch

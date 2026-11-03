@@ -1,0 +1,20 @@
+m5_chain_mono:
+  id: chain_mono
+  uart_id: uart_bus
+  chain_index: 1
+
+light:
+  - platform: m5_chain_mono
+    id: chain_mono_light
+    name: Chain Mono
+    m5_chain_mono_id: chain_mono
+
+display:
+  - platform: addressable_light
+    id: chain_mono_display
+    addressable_light_id: chain_mono_light
+    width: 8
+    height: 8
+    update_interval: 16ms
+    lambda: |-
+      it.rectangle(0, 0, it.get_width(), it.get_height());

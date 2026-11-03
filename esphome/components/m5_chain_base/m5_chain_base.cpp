@@ -5,8 +5,8 @@
 #include <cinttypes>
 #include <cstring>
 
-#include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 namespace esphome::m5_chain_base {
@@ -15,6 +15,34 @@ ESPHOME_LOG_TAG(TAG, "m5_chain_base");
 
 static constexpr size_t MAX_CHAIN_INSTANCES = 16;
 static std::array<M5ChainBase *, MAX_CHAIN_INSTANCES> chain_instances{};
+
+struct ChainBusState {
+  uart::UARTComponent *parent{nullptr};
+  M5ChainBase *active_request{nullptr};
+  size_t round_robin_cursor{0};
+  /// Earliest millis() at which the next frame may start. Nothing may be written before it.
+  uint32_t next_allowed_at{0};
+};
+
+static std::array<ChainBusState, MAX_CHAIN_INSTANCES> chain_buses{};
+
+static ChainBusState *get_bus_state(uart::UARTComponent *parent, bool create) {
+  if (parent == nullptr)
+    return nullptr;
+  for (auto &bus : chain_buses) {
+    if (bus.parent == parent)
+      return &bus;
+  }
+  if (create) {
+    for (auto &bus : chain_buses) {
+      if (bus.parent == nullptr) {
+        bus.parent = parent;
+        return &bus;
+      }
+    }
+  }
+  return nullptr;
+}
 
 M5ChainBase::~M5ChainBase() { this->unregister_instance_(); }
 
@@ -34,6 +62,9 @@ void M5ChainBase::register_instance_() {
   for (auto &instance : chain_instances) {
     if (instance == nullptr) {
       instance = this;
+      if (get_bus_state(this->parent_, true) == nullptr) {
+        ESP_LOGW(TAG, "Too many M5Stack Chain UART buses; requests may not be scheduled");
+      }
       return;
     }
   }
@@ -45,14 +76,25 @@ void M5ChainBase::unregister_instance_() {
     if (instance == this)
       instance = nullptr;
   }
+  auto *bus = get_bus_state(this->parent_, false);
+  if (bus == nullptr)
+    return;
+  if (bus->active_request == this)
+    bus->active_request = nullptr;
+  for (const auto *instance : chain_instances) {
+    if (instance != nullptr && instance->parent_ == this->parent_)
+      return;
+  }
+  *bus = {};
 }
 
 void M5ChainBase::setup() { this->register_instance_(); }
 
 void M5ChainBase::loop() {
-  // One UART has one receive queue. The first registered Chain instance owns
-  // draining it, then dispatches each complete frame to every instance on the
-  // same UART so a response for a later node is not consumed by an earlier one.
+  if (this->parent_ == nullptr)
+    return;
+
+  // One instance drains and schedules each shared UART bus.
   bool is_reader = false;
   for (auto *instance : chain_instances) {
     if (instance != nullptr && instance->parent_ == this->parent_) {
@@ -65,23 +107,32 @@ void M5ChainBase::loop() {
       uint8_t byte = 0;
       if (!this->read_byte(&byte))
         break;
-      if (this->receive_buffer_size_ < this->receive_buffer_.size()) {
-        this->receive_buffer_[this->receive_buffer_size_++] = byte;
-      } else {
-        // Drop the oldest byte so a malformed stream cannot permanently stall parsing.
-        std::memmove(this->receive_buffer_.data(), this->receive_buffer_.data() + 1, this->receive_buffer_.size() - 1);
-        this->receive_buffer_.back() = byte;
+      if (this->receive_buffer_size_ == this->receive_buffer_.size()) {
+        this->parse_buffer_();
+        if (this->receive_buffer_size_ == this->receive_buffer_.size()) {
+          ESP_LOGW(TAG, "Chain RX buffer full; discarding incomplete frame");
+          this->receive_buffer_size_ = 0;
+        }
       }
+      this->receive_buffer_[this->receive_buffer_size_++] = byte;
+      if (this->receive_buffer_size_ >= MAX_PACKET_SIZE)
+        this->parse_buffer_();
     }
     this->parse_buffer_();
+    this->service_bus_(millis());
   }
-  this->handle_timeout_(App.get_loop_component_start_time());
 }
 
 void M5ChainBase::dump_config() { this->dump_base_config(); }
 
 void M5ChainBase::dump_base_config() {
   ESP_LOGCONFIG(TAG, "M5Stack Chain UART base");
+  ESP_LOGCONFIG(TAG, "  Bus arbitration: round-robin");
+  ESP_LOGCONFIG(TAG, "  Inter-request delay: %" PRIu32 " ms", INTER_REQUEST_DELAY_MS);
+  ESP_LOGCONFIG(TAG, "  Pipelined frame pacing: %" PRIu32 " ms after the frame leaves the wire", PIPELINE_PACING_MS);
+  ESP_LOGCONFIG(TAG, "  Response timeout: %" PRIu32 " ms + %" PRIu32 " ms per chain hop", BASE_RESPONSE_TIMEOUT_MS,
+                PER_CHAIN_HOP_TIMEOUT_MS);
+  ESP_LOGCONFIG(TAG, "  Request retries: %u", MAX_REQUEST_RETRIES);
   if (this->update_interval_ms_ == SCHEDULER_DONT_RUN) {
     ESP_LOGCONFIG(TAG, "  Update interval: never");
   } else {
@@ -90,12 +141,22 @@ void M5ChainBase::dump_base_config() {
 }
 
 bool M5ChainBase::send_packet(uint8_t index, uint8_t command, const uint8_t *data, uint16_t data_size) {
+  auto *bus = get_bus_state(this->parent_, false);
+  const auto now = millis();
+  if (this->parent_ == nullptr || bus == nullptr || bus->active_request != nullptr ||
+      static_cast<int32_t>(now - bus->next_allowed_at) < 0)
+    return false;
+  for (const auto *instance : chain_instances) {
+    if (instance != nullptr && instance->parent_ == this->parent_ && instance->request_queued_)
+      return false;
+  }
   uint16_t packet_size = 0;
-  if (this->parent_ == nullptr || !build_packet(index, command, data, data_size, this->send_buffer_.data(),
-                                                this->send_buffer_.size(), &packet_size)) {
+  if (!build_packet(index, command, data, data_size, this->send_buffer_.data(), this->send_buffer_.size(),
+                    &packet_size)) {
     return false;
   }
   this->write_array(this->send_buffer_.data(), packet_size);
+  bus->next_allowed_at = now + wire_time_ms_(packet_size) + INTER_REQUEST_DELAY_MS;
   return true;
 }
 
@@ -103,19 +164,98 @@ ChainStatus M5ChainBase::request(uint8_t index, uint8_t command, const uint8_t *
                                  uint32_t timeout_ms) {
   if (this->request_pending_)
     return ChainStatus::CHAIN_STATUS_BUSY;
-  uint16_t packet_size = 0;
-  if (timeout_ms == 0 || this->parent_ == nullptr ||
-      !build_packet(index, command, data, data_size, this->send_buffer_.data(), this->send_buffer_.size(),
-                    &packet_size))
-    return timeout_ms == 0 ? ChainStatus::CHAIN_STATUS_PARAMETER_ERROR : ChainStatus::CHAIN_STATUS_NOT_INITIALIZED;
+  if (timeout_ms == 0)
+    return ChainStatus::CHAIN_STATUS_PARAMETER_ERROR;
+  if (this->parent_ == nullptr)
+    return ChainStatus::CHAIN_STATUS_NOT_INITIALIZED;
+  auto *bus = get_bus_state(this->parent_, false);
+  if (bus == nullptr)
+    return ChainStatus::CHAIN_STATUS_NOT_INITIALIZED;
+  if (timeout_ms == DEFAULT_REQUEST_TIMEOUT_MS)
+    timeout_ms = response_timeout_for_index_(index);
+  if (!build_packet(index, command, data, data_size, this->send_buffer_.data(), this->send_buffer_.size(),
+                    &this->send_buffer_size_))
+    return ChainStatus::CHAIN_STATUS_PARAMETER_ERROR;
 
   this->pending_index_ = index;
   this->pending_command_ = command;
   this->request_timeout_ms_ = timeout_ms;
-  this->write_array(this->send_buffer_.data(), packet_size);
+  this->expect_response_ = true;
   this->request_pending_ = true;
-  this->request_started_at_ = App.get_loop_component_start_time();
+  this->request_queued_ = true;
+  this->transaction_active_ = false;
+  this->request_started_at_ = 0;
+  this->retry_at_ = millis();
+  this->retry_count_ = 0;
+  this->start_queued_request_(this->retry_at_);
   return ChainStatus::CHAIN_STATUS_OK;
+}
+
+uint32_t M5ChainBase::response_timeout_for_index_(uint8_t index) {
+  const uint32_t hop_count = index > 0 ? index - 1 : 0;
+  return BASE_RESPONSE_TIMEOUT_MS + hop_count * PER_CHAIN_HOP_TIMEOUT_MS;
+}
+
+uint32_t M5ChainBase::wire_time_ms_(uint16_t packet_size) {
+  return (static_cast<uint32_t>(packet_size) * BITS_PER_BYTE * 1000 + CHAIN_BAUD_RATE - 1) / CHAIN_BAUD_RATE;
+}
+
+ChainStatus M5ChainBase::send_frame(uint8_t index, uint8_t command, const uint8_t *data, uint16_t data_size) {
+  if (this->request_pending_ || this->request_queued_)
+    return ChainStatus::CHAIN_STATUS_BUSY;
+  if (this->parent_ == nullptr)
+    return ChainStatus::CHAIN_STATUS_NOT_INITIALIZED;
+  auto *bus = get_bus_state(this->parent_, false);
+  if (bus == nullptr)
+    return ChainStatus::CHAIN_STATUS_NOT_INITIALIZED;
+  if (!build_packet(index, command, data, data_size, this->send_buffer_.data(), this->send_buffer_.size(),
+                    &this->send_buffer_size_))
+    return ChainStatus::CHAIN_STATUS_PARAMETER_ERROR;
+
+  this->pending_index_ = index;
+  this->pending_command_ = command;
+  this->expect_response_ = false;
+  this->request_pending_ = true;
+  this->request_queued_ = true;
+  this->transaction_active_ = false;
+  this->request_started_at_ = 0;
+  this->retry_at_ = millis();
+  this->retry_count_ = 0;
+  this->start_queued_request_(this->retry_at_);
+  return ChainStatus::CHAIN_STATUS_OK;
+}
+
+bool M5ChainBase::start_queued_request_(uint32_t now) {
+  if (!this->request_pending_ || !this->request_queued_)
+    return false;
+  auto *bus = get_bus_state(this->parent_, false);
+  if (bus == nullptr || bus->active_request != nullptr || static_cast<int32_t>(now - this->retry_at_) < 0 ||
+      static_cast<int32_t>(now - bus->next_allowed_at) < 0)
+    return false;
+
+  this->write_array(this->send_buffer_.data(), this->send_buffer_size_);
+  this->request_queued_ = false;
+
+  if (!this->expect_response_) {
+    // Nothing waits on the acknowledgement, so hand the bus straight back: the next panel only has
+    // to wait for this frame to clear the wire plus one hop of forwarding time.
+    this->request_pending_ = false;
+    this->transaction_active_ = false;
+    bus->next_allowed_at = now + wire_time_ms_(this->send_buffer_size_) + PIPELINE_PACING_MS;
+  } else {
+    this->transaction_active_ = true;
+    this->request_started_at_ = now;
+    bus->active_request = this;
+    bus->next_allowed_at = now + wire_time_ms_(this->send_buffer_size_);
+  }
+
+  for (size_t i = 0; i < chain_instances.size(); i++) {
+    if (chain_instances[i] == this) {
+      bus->round_robin_cursor = (i + 1) % chain_instances.size();
+      break;
+    }
+  }
+  return true;
 }
 
 uint8_t M5ChainBase::calculate_crc(uint8_t index, uint8_t command, const uint8_t *data, uint16_t data_size) {
@@ -204,24 +344,48 @@ void M5ChainBase::parse_buffer_() {
 }
 
 void M5ChainBase::dispatch_frame_(const uint8_t *packet, uint16_t packet_size) {
+  // Only a frame that answers one of our requests throttles the bus. Unmatched traffic, such as the
+  // acknowledgement of a send_frame() call, must not delay the next panel by another inter-request
+  // gap, otherwise pipelining would gain nothing.
+  bool matched = false;
   for (auto *instance : chain_instances) {
     if (instance != nullptr && instance->parent_ == this->parent_)
-      instance->dispatch_frame_to_instance_(packet, packet_size);
+      matched |= instance->dispatch_frame_to_instance_(packet, packet_size);
+  }
+  if (!matched)
+    return;
+  if (auto *bus = get_bus_state(this->parent_, false); bus != nullptr) {
+    const uint32_t allowed = millis() + INTER_REQUEST_DELAY_MS;
+    if (static_cast<int32_t>(allowed - bus->next_allowed_at) > 0)
+      bus->next_allowed_at = allowed;
   }
 }
 
-void M5ChainBase::dispatch_frame_to_instance_(const uint8_t *packet, uint16_t packet_size) {
+bool M5ChainBase::dispatch_frame_to_instance_(const uint8_t *packet, uint16_t packet_size) {
   const uint16_t length = encode_uint16(packet[3], packet[2]);
   const ChainFrame frame{packet[4], packet[5], packet + 6, static_cast<uint16_t>(length - MIN_PACKET_LENGTH)};
-  const bool matches_request =
-      this->request_pending_ && frame.index == this->pending_index_ && frame.command == this->pending_command_;
+  const bool matches_request = this->request_pending_ && this->expect_response_ &&
+                               (this->transaction_active_ || this->retry_count_ > 0) &&
+                               frame.index == this->pending_index_ && frame.command == this->pending_command_;
   if (matches_request) {
+    // A slow answer still works, but it steals time from the next frame on a shared bus.
+    const uint32_t round_trip = millis() - this->request_started_at_;
+    if (round_trip >= SLOW_RESPONSE_LOG_MS) {
+      ESP_LOGD(TAG, "Slow response from index %u for command 0x%02X: %" PRIu32 " ms", frame.index, frame.command,
+               round_trip);
+    }
     this->request_pending_ = false;
+    this->request_queued_ = false;
+    this->transaction_active_ = false;
+    this->retry_count_ = 0;
+    if (auto *bus = get_bus_state(this->parent_, false); bus != nullptr && bus->active_request == this)
+      bus->active_request = nullptr;
     this->on_response(frame);
   } else {
     this->on_unsolicited(frame);
   }
   (void) packet_size;
+  return matches_request;
 }
 
 void M5ChainBase::discard_prefix_(uint16_t count) {
@@ -233,12 +397,77 @@ void M5ChainBase::discard_prefix_(uint16_t count) {
 }
 
 void M5ChainBase::handle_timeout_(uint32_t now) {
-  if (!this->request_pending_ || now - this->request_started_at_ < this->request_timeout_ms_)
+  if (!this->transaction_active_ || now - this->request_started_at_ < this->request_timeout_ms_)
     return;
+  auto *bus = get_bus_state(this->parent_, false);
+  if (bus != nullptr && bus->active_request == this)
+    bus->active_request = nullptr;
+  this->transaction_active_ = false;
+  if (bus != nullptr) {
+    const uint32_t allowed = now + INTER_REQUEST_DELAY_MS;
+    if (static_cast<int32_t>(allowed - bus->next_allowed_at) > 0)
+      bus->next_allowed_at = allowed;
+  }
+  if (this->retry_count_ < MAX_REQUEST_RETRIES) {
+    const uint32_t backoff = RETRY_BACKOFF_MS << this->retry_count_;
+    this->retry_count_++;
+    this->retry_at_ = now + backoff;
+    this->request_queued_ = true;
+    ESP_LOGW(TAG, "No response from index %u for command 0x%02X after %" PRIu32 " ms, retry %u/%u",
+             this->pending_index_, this->pending_command_, this->request_timeout_ms_, this->retry_count_,
+             MAX_REQUEST_RETRIES);
+    return;
+  }
+
   const uint8_t index = this->pending_index_;
   const uint8_t command = this->pending_command_;
   this->request_pending_ = false;
+  this->request_queued_ = false;
+  this->retry_count_ = 0;
+  ESP_LOGW(TAG, "No response from index %u for command 0x%02X, giving up", index, command);
   this->on_request_timeout(index, command);
+}
+
+void M5ChainBase::service_bus_(uint32_t now) {
+  auto *bus = get_bus_state(this->parent_, false);
+  if (bus == nullptr)
+    return;
+
+  if (bus->active_request != nullptr) {
+    bus->active_request->handle_timeout_(now);
+    if (bus->active_request != nullptr)
+      return;
+  }
+  if (static_cast<int32_t>(now - bus->next_allowed_at) < 0)
+    return;
+
+  // Polls go before queued work: a device that re-queues as soon as its response arrives (the
+  // display and light frames of Chain Mono/RGB do) would otherwise keep the bus busy forever and
+  // the instances that only poll every update interval would never get a turn.
+  for (size_t offset = 0; offset < chain_instances.size(); offset++) {
+    const size_t index = (bus->round_robin_cursor + offset) % chain_instances.size();
+    auto *instance = chain_instances[index];
+    if (instance == nullptr || instance->parent_ != this->parent_ || instance->request_pending_ ||
+        !instance->is_update_interval_enabled() || static_cast<int32_t>(now - instance->next_poll_at_) < 0)
+      continue;
+    instance->next_poll_at_ = now + instance->update_interval_ms_;
+    instance->poll_next_();
+    if (instance->request_pending_) {
+      if (instance->request_queued_)
+        instance->start_queued_request_(now);
+      return;
+    }
+  }
+
+  for (size_t offset = 0; offset < chain_instances.size(); offset++) {
+    const size_t index = (bus->round_robin_cursor + offset) % chain_instances.size();
+    auto *instance = chain_instances[index];
+    if (instance == nullptr || instance->parent_ != this->parent_ || !instance->request_pending_ ||
+        !instance->request_queued_ || static_cast<int32_t>(now - instance->retry_at_) < 0)
+      continue;
+    if (instance->start_queued_request_(now))
+      return;
+  }
 }
 
 }  // namespace esphome::m5_chain_base

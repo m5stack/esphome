@@ -11,10 +11,6 @@ static constexpr uint8_t KEY_COMMAND_GET_STATUS = 0xE1;
 
 void M5ChainKey::setup() {
   ESP_LOGCONFIG(TAG, "Setting up M5Stack Chain Key (chain_index=%u)...", this->get_chain_index());
-  if (this->is_update_interval_enabled()) {
-    this->set_interval(KEY_POLL_INTERVAL_ID, this->get_update_interval(), [this]() { this->poll_key_(); });
-    this->poll_key_();
-  }
 }
 
 void M5ChainKey::dump_config() {
@@ -23,11 +19,10 @@ void M5ChainKey::dump_config() {
   ESP_LOGCONFIG(TAG, "  Chain index: %u", this->get_chain_index());
 }
 
-void M5ChainKey::poll_key_() {
+void M5ChainKey::poll_next_() {
   if (this->key_sensor_ == nullptr || this->request_pending())
     return;
-  if (this->request(this->get_chain_index(), KEY_COMMAND_GET_STATUS, KEY_RESPONSE_TIMEOUT_MS) !=
-      m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
+  if (this->request(this->get_chain_index(), KEY_COMMAND_GET_STATUS) != m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
     this->status_set_warning();
 }
 

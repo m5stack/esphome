@@ -15,9 +15,31 @@ static constexpr uint8_t PACKET_TAIL_HIGH = 0x55;
 static constexpr uint8_t PACKET_TAIL_LOW = 0xAA;
 static constexpr uint16_t MAX_PACKET_LENGTH = 0x100;
 static constexpr uint16_t MAX_PACKET_SIZE = MAX_PACKET_LENGTH + 6;
+static constexpr uint16_t RECEIVE_BUFFER_SIZE = MAX_PACKET_SIZE * 4;
 static constexpr uint16_t MIN_PACKET_LENGTH = 3;
 static constexpr uint16_t MIN_PACKET_SIZE = MIN_PACKET_LENGTH + 6;
 static constexpr uint16_t MAX_DATA_SIZE = MAX_PACKET_LENGTH - MIN_PACKET_LENGTH;
+static constexpr uint32_t DEFAULT_REQUEST_TIMEOUT_MS = 0xFFFFFFFFUL;
+static constexpr uint32_t BASE_RESPONSE_TIMEOUT_MS = 250;
+static constexpr uint32_t PER_CHAIN_HOP_TIMEOUT_MS = 50;
+/// Idle time between two requests on one bus. It has to cover the chain node's turnaround, which
+/// grows with the number of hops: with 1 ms a seven node chain dropped frames on the panels further
+/// down the wire. A request/response pair already costs the frame's wire time plus the device
+/// latency, so applications that refresh many nodes per frame want this as small as the chain
+/// tolerates; 5 ms is the value verified on hardware.
+static constexpr uint32_t INTER_REQUEST_DELAY_MS = 5;
+/// Responses slower than this are worth a log line: they eat into a display frame's budget.
+static constexpr uint32_t SLOW_RESPONSE_LOG_MS = 8;
+/// Extra breathing room after a frame sent with send_frame(). Measured round trips show about
+/// 2.8 ms of forwarding delay per chain hop, and a node relays both the request and its answer, so
+/// two frames must stay roughly 2 x 2.8 ms apart. Together with the frame's wire time this keeps
+/// the whole 48x8 strip inside one scroll step instead of waiting out every acknowledgement.
+static constexpr uint32_t PIPELINE_PACING_MS = 8;
+/// Ten bits per byte over the 115200 baud that the chain devices require.
+static constexpr uint32_t BITS_PER_BYTE = 10;
+static constexpr uint32_t CHAIN_BAUD_RATE = 115200;
+static constexpr uint32_t RETRY_BACKOFF_MS = 25;
+static constexpr uint8_t MAX_REQUEST_RETRIES = 2;
 
 enum class ChainStatus : uint8_t {
   CHAIN_STATUS_OK = 0x00,
@@ -61,7 +83,10 @@ class M5ChainBase : public Component, public uart::UARTDevice {
   /// Position in the chain as seen from the controller (the first node is 1).
   void set_chain_index(uint8_t chain_index) { this->chain_index_ = chain_index; }
   uint8_t get_chain_index() const { return this->chain_index_; }
-  void set_update_interval(uint32_t interval_ms) { this->update_interval_ms_ = interval_ms; }
+  void set_update_interval(uint32_t interval_ms) {
+    this->update_interval_ms_ = interval_ms;
+    this->next_poll_at_ = 0;
+  }
   uint32_t get_update_interval() const { return this->update_interval_ms_; }
   bool is_update_interval_enabled() const { return this->update_interval_ms_ != SCHEDULER_DONT_RUN; }
 
@@ -79,21 +104,34 @@ class M5ChainBase : public Component, public uart::UARTDevice {
     return this->send_packet(index, static_cast<uint8_t>(command), nullptr, 0);
   }
 
-  /// Start one request. Only one request can be pending because the wire protocol has no sequence number.
+  /// Queue one request. Only one request per UART can be active because the wire protocol has no sequence number.
   ChainStatus request(uint8_t index, uint8_t command, const uint8_t *data, uint16_t data_size,
-                      uint32_t timeout_ms = 100);
-  ChainStatus request(uint8_t index, uint8_t command, uint32_t timeout_ms = 100) {
+                      uint32_t timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS);
+  ChainStatus request(uint8_t index, uint8_t command, uint32_t timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS) {
     return this->request(index, command, nullptr, 0, timeout_ms);
   }
   ChainStatus request(uint8_t index, ChainCommand command, const uint8_t *data, uint16_t data_size,
-                      uint32_t timeout_ms = 100) {
+                      uint32_t timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS) {
     return this->request(index, static_cast<uint8_t>(command), data, data_size, timeout_ms);
   }
-  ChainStatus request(uint8_t index, ChainCommand command, uint32_t timeout_ms = 100) {
+  ChainStatus request(uint8_t index, ChainCommand command, uint32_t timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS) {
     return this->request(index, static_cast<uint8_t>(command), nullptr, 0, timeout_ms);
   }
 
-  /// Whether this instance has a request on the wire.
+  /** Send one frame without waiting for the device's acknowledgement.
+   *
+   * A chain node needs several milliseconds to forward the frame and answer it, and that latency is
+   * pure idle time for a caller that only wants to refresh a panel: measured round trips run from
+   * 8 ms for the first node to 19 ms for the seventh. Panel frames are idempotent and the next frame
+   * replaces them, so a lost answer costs nothing. Frames are paced by their own wire time so the
+   * chain is never handed two packets at once.
+   */
+  ChainStatus send_frame(uint8_t index, uint8_t command, const uint8_t *data, uint16_t data_size);
+  ChainStatus send_frame(uint8_t index, ChainCommand command, const uint8_t *data, uint16_t data_size) {
+    return this->send_frame(index, static_cast<uint8_t>(command), data, data_size);
+  }
+
+  /// Whether this instance has a queued or active request.
   bool request_pending() const { return this->request_pending_; }
   uint8_t pending_index() const { return this->pending_index_; }
   uint8_t pending_command() const { return this->pending_command_; }
@@ -113,26 +151,41 @@ class M5ChainBase : public Component, public uart::UARTDevice {
   virtual void on_unsolicited(const ChainFrame &) {}
   /// Called when the active request expires without a matching response.
   virtual void on_request_timeout(uint8_t, uint8_t) {}
+  /// Called by the per-UART round-robin scheduler when this component is due to poll.
+  virtual void poll_next_() {}
 
  private:
   void register_instance_();
   void unregister_instance_();
   void parse_buffer_();
   void dispatch_frame_(const uint8_t *packet, uint16_t packet_size);
-  void dispatch_frame_to_instance_(const uint8_t *packet, uint16_t packet_size);
+  bool dispatch_frame_to_instance_(const uint8_t *packet, uint16_t packet_size);
   void discard_prefix_(uint16_t count);
   void handle_timeout_(uint32_t now);
+  void service_bus_(uint32_t now);
+  bool start_queued_request_(uint32_t now);
+  static uint32_t response_timeout_for_index_(uint8_t index);
+  /// Time the frame occupies the wire, rounded up to whole milliseconds.
+  static uint32_t wire_time_ms_(uint16_t packet_size);
 
-  std::array<uint8_t, MAX_PACKET_SIZE> receive_buffer_{};
+  std::array<uint8_t, RECEIVE_BUFFER_SIZE> receive_buffer_{};
   uint16_t receive_buffer_size_{0};
   std::array<uint8_t, MAX_PACKET_SIZE> send_buffer_{};
+  uint16_t send_buffer_size_{0};
 
   bool request_pending_{false};
+  bool request_queued_{false};
+  bool transaction_active_{false};
+  /// False for send_frame(): the queued frame is written and the bus is released immediately.
+  bool expect_response_{true};
   uint8_t pending_index_{0};
   uint8_t pending_command_{0};
   uint32_t request_started_at_{0};
   uint32_t request_timeout_ms_{0};
+  uint32_t retry_at_{0};
+  uint8_t retry_count_{0};
   uint32_t update_interval_ms_{100};
+  uint32_t next_poll_at_{0};
   uint8_t chain_index_{1};
 };
 

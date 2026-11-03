@@ -3,11 +3,9 @@ from esphome.components import binary_sensor
 import esphome.config_validation as cv
 from esphome.types import ConfigType
 
-from .. import M5ChainKey, m5_chain_key_ns
+from .. import CONF_M5_CHAIN_KEY_ID, M5ChainKey, m5_chain_key_ns
 
 DEPENDENCIES = ["m5_chain_key"]
-
-CONF_M5_CHAIN_KEY_ID = "m5_chain_key_id"
 
 M5ChainKeyBinarySensor = m5_chain_key_ns.class_(
     "M5ChainKeyBinarySensor",

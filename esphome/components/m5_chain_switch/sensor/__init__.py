@@ -4,11 +4,9 @@ import esphome.config_validation as cv
 from esphome.const import CONF_TYPE
 from esphome.types import ConfigType
 
-from .. import M5ChainSwitch, m5_chain_switch_ns
+from .. import CONF_M5_CHAIN_SWITCH_ID, M5ChainSwitch, m5_chain_switch_ns
 
 DEPENDENCIES = ["m5_chain_switch"]
-
-CONF_M5_CHAIN_SWITCH_ID = "m5_chain_switch_id"
 
 M5ChainSwitchSensor = m5_chain_switch_ns.class_(
     "M5ChainSwitchSensor", sensor.Sensor, cg.Parented.template(M5ChainSwitch)

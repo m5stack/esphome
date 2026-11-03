@@ -17,10 +17,6 @@ static constexpr uint8_t BUTTON_REPORT_COMMAND = 0xE0;
 
 void M5ChainEncoder::setup() {
   ESP_LOGCONFIG(TAG, "Setting up M5Stack Chain Encoder (chain_index=%u)...", this->get_chain_index());
-  if (this->is_update_interval_enabled()) {
-    this->set_interval(POLL_INTERVAL_ID, this->get_update_interval(), [this]() { this->poll_next_(); });
-    this->poll_next_();
-  }
 }
 
 void M5ChainEncoder::dump_config() {
@@ -51,7 +47,7 @@ void M5ChainEncoder::poll_next_() {
       command = static_cast<uint8_t>(EncoderCommand::ENCODER_COMMAND_BUTTON_GET_STATUS);
     }
     this->pending_slot_ = slot;
-    const auto status = this->request(this->get_chain_index(), command, RESPONSE_TIMEOUT_MS);
+    const auto status = this->request(this->get_chain_index(), command);
     if (status != m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
       this->status_set_warning();
     return;
@@ -104,7 +100,6 @@ void M5ChainEncoder::on_response(const m5_chain_base::ChainFrame &frame) {
     } else {
       this->status_clear_warning();
       this->send_pending_rgb_();
-      this->poll_next_();
     }
     return;
   }
@@ -116,14 +111,12 @@ void M5ChainEncoder::on_response(const m5_chain_base::ChainFrame &frame) {
       this->status_clear_warning();
     }
     this->send_pending_rgb_();
-    this->poll_next_();
     return;
   }
   const size_t slot = this->pending_slot_;
   if (slot >= this->sensors_.size() || this->sensors_[slot] == nullptr || frame.data_size < 1) {
     this->status_set_warning();
     this->send_pending_rgb_();
-    this->poll_next_();
     return;
   }
   if (slot < 2) {
@@ -138,7 +131,6 @@ void M5ChainEncoder::on_response(const m5_chain_base::ChainFrame &frame) {
     this->status_clear_warning();
   }
   this->send_pending_rgb_();
-  this->poll_next_();
 }
 
 void M5ChainEncoder::on_unsolicited(const m5_chain_base::ChainFrame &frame) {
@@ -151,7 +143,6 @@ void M5ChainEncoder::on_request_timeout(uint8_t index, uint8_t command) {
   ESP_LOGW(TAG, "Timeout waiting for Chain Encoder response (index=%u, command=0x%02X)", index, command);
   this->status_set_warning();
   this->send_pending_rgb_();
-  this->poll_next_();
 }
 
 }  // namespace esphome::m5_chain_encoder

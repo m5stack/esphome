@@ -12,10 +12,6 @@ static constexpr uint8_t TOF_COMMAND_GET_DISTANCE = static_cast<uint8_t>(TofComm
 
 void M5ChainToF::setup() {
   ESP_LOGCONFIG(TAG, "Setting up M5Stack Chain ToF (chain_index=%u)...", this->get_chain_index());
-  if (this->is_update_interval_enabled()) {
-    this->set_interval(TOF_POLL_INTERVAL_ID, this->get_update_interval(), [this]() { this->poll_distance_(); });
-    this->poll_distance_();
-  }
 }
 
 void M5ChainToF::dump_config() {
@@ -24,11 +20,11 @@ void M5ChainToF::dump_config() {
   ESP_LOGCONFIG(TAG, "  Chain index: %u", this->get_chain_index());
 }
 
-void M5ChainToF::poll_distance_() {
+void M5ChainToF::poll_next_() {
   if (this->distance_sensor_ == nullptr || this->request_pending())
     return;
-  if (this->request(this->get_chain_index(), static_cast<uint8_t>(TofCommand::TOF_COMMAND_GET_DISTANCE),
-                    TOF_RESPONSE_TIMEOUT_MS) != m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
+  if (this->request(this->get_chain_index(), static_cast<uint8_t>(TofCommand::TOF_COMMAND_GET_DISTANCE)) !=
+      m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
     this->status_set_warning();
 }
 

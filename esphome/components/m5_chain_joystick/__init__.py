@@ -10,6 +10,8 @@ DEPENDENCIES = ["uart"]
 DOMAIN = "m5_chain_joystick"
 MULTI_CONF = True
 
+CONF_M5_CHAIN_JOYSTICK_ID = "m5_chain_joystick_id"
+
 m5_chain_joystick_ns = cg.esphome_ns.namespace("m5_chain_joystick")
 M5ChainJoystick = m5_chain_joystick_ns.class_(
     "M5ChainJoystick", m5_chain_base.M5ChainBase

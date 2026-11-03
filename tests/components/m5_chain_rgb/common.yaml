@@ -1,0 +1,21 @@
+m5_chain_rgb:
+  id: chain_rgb
+  uart_id: uart_bus
+  chain_index: 1
+
+light:
+  - platform: m5_chain_rgb
+    id: chain_rgb_light
+    name: Chain RGB
+    m5_chain_rgb_id: chain_rgb
+
+display:
+  - platform: addressable_light
+    id: chain_rgb_display
+    addressable_light_id: chain_rgb_light
+    width: 8
+    height: 8
+    update_interval: 16ms
+    lambda: |-
+      it.filled_rectangle(0, 0, 4, 4, Color(255, 0, 0));
+      it.line(0, 7, 7, 0, Color(0, 0, 255));

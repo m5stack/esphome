@@ -19,10 +19,6 @@ static constexpr uint8_t BUTTON_REPORT_COMMAND = 0xE0;
 
 void M5ChainJoystick::setup() {
   ESP_LOGCONFIG(TAG, "Setting up M5Stack Chain Joystick (chain_index=%u)...", this->get_chain_index());
-  if (this->is_update_interval_enabled()) {
-    this->set_interval(POLL_INTERVAL_ID, this->get_update_interval(), [this]() { this->poll_next_(); });
-    this->poll_next_();
-  }
 }
 
 void M5ChainJoystick::dump_config() {
@@ -61,9 +57,8 @@ void M5ChainJoystick::poll_next_() {
       if (this->button_sensor_ == nullptr)
         continue;
       this->pending_type_ = static_cast<uint8_t>(slot);
-      const auto status =
-          this->request(this->get_chain_index(),
-                        static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_BUTTON_STATUS), RESPONSE_TIMEOUT_MS);
+      const auto status = this->request(this->get_chain_index(),
+                                        static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_BUTTON_STATUS));
       if (status != m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
         this->status_set_warning();
       return;
@@ -91,7 +86,7 @@ void M5ChainJoystick::poll_next_() {
       default:
         continue;
     }
-    const auto status = this->request(this->get_chain_index(), command, RESPONSE_TIMEOUT_MS);
+    const auto status = this->request(this->get_chain_index(), command);
     if (status != m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
       this->status_set_warning();
     return;
@@ -161,7 +156,7 @@ void M5ChainJoystick::on_unsolicited(const m5_chain_base::ChainFrame &frame) {
   }
 }
 
-void M5ChainJoystick::handle_response_(const m5_chain_base::ChainFrame &frame, bool continue_polling) {
+void M5ChainJoystick::handle_response_(const m5_chain_base::ChainFrame &frame, bool is_request_response) {
   const auto command = static_cast<JoystickCommand>(frame.command);
   if (command == JoystickCommand::JOYSTICK_COMMAND_GET_BUTTON_STATUS) {
     this->handle_button_status_(frame);
@@ -220,10 +215,8 @@ void M5ChainJoystick::handle_response_(const m5_chain_base::ChainFrame &frame, b
       this->status_clear_warning();
     }
   }
-  if (continue_polling) {
+  if (is_request_response)
     this->send_pending_rgb_();
-    this->poll_next_();
-  }
 }
 
 void M5ChainJoystick::handle_button_status_(const m5_chain_base::ChainFrame &frame) {
@@ -244,7 +237,6 @@ void M5ChainJoystick::on_request_timeout(uint8_t index, uint8_t command) {
   }
   this->status_set_warning();
   this->send_pending_rgb_();
-  this->poll_next_();
 }
 
 }  // namespace esphome::m5_chain_joystick

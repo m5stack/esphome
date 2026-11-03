@@ -25,15 +25,15 @@ binary_sensor:
 output:
   - platform: m5_chain_key
     id: chain_key_red
-    chain_key_id: chain_key
+    m5_chain_key_id: chain_key
     channel: rgb_red
   - platform: m5_chain_key
     id: chain_key_green
-    chain_key_id: chain_key
+    m5_chain_key_id: chain_key
     channel: rgb_green
   - platform: m5_chain_key
     id: chain_key_blue
-    chain_key_id: chain_key
+    m5_chain_key_id: chain_key
     channel: rgb_blue
 
 light:

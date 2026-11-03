@@ -10,6 +10,8 @@ DEPENDENCIES = ["uart"]
 DOMAIN = "m5_chain_encoder"
 MULTI_CONF = True
 
+CONF_M5_CHAIN_ENCODER_ID = "m5_chain_encoder_id"
+
 m5_chain_encoder_ns = cg.esphome_ns.namespace("m5_chain_encoder")
 M5ChainEncoder = m5_chain_encoder_ns.class_("M5ChainEncoder", m5_chain_base.M5ChainBase)
 

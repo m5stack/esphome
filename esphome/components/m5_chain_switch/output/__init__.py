@@ -5,16 +5,14 @@ import esphome.config_validation as cv
 from esphome.const import CONF_CHANNEL, CONF_ID
 from esphome.types import ConfigType
 
-from .. import M5ChainSwitch
+from .. import CONF_M5_CHAIN_SWITCH_ID, M5ChainSwitch
 
 CODEOWNERS = ["@Jasionf"]
 DEPENDENCIES = ["m5_chain_switch"]
 
-CONF_M5_CHAIN_SWITCH_ID = "m5_chain_switch_id"
-
 CONFIG_SCHEMA = output.FLOAT_OUTPUT_SCHEMA.extend(
     {
-        cv.Required(CONF_ID): cv.declare_id(M5ChainLedOutput),
+        cv.GenerateID(): cv.declare_id(M5ChainLedOutput),
         cv.Required(CONF_CHANNEL): cv.enum(CHANNEL_MAP),
         cv.GenerateID(CONF_M5_CHAIN_SWITCH_ID): cv.use_id(M5ChainSwitch),
     }

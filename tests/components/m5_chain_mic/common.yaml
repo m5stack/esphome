@@ -1,0 +1,59 @@
+m5_chain_mic:
+  id: chain_mic
+  uart_id: uart_bus
+  chain_index: 2
+  update_interval: 250ms
+
+sensor:
+  - platform: m5_chain_mic
+    m5_chain_mic_id: chain_mic
+    name: Chain MIC ADC
+    type: adc_12
+  - platform: m5_chain_mic
+    m5_chain_mic_id: chain_mic
+    name: Chain MIC ADC 8 bit
+    type: adc_8
+
+binary_sensor:
+  - platform: m5_chain_mic
+    m5_chain_mic_id: chain_mic
+    name: Chain MIC Threshold
+    on_press:
+      - logger.log: "Chain MIC level above threshold"
+    on_release:
+      - logger.log: "Chain MIC level below threshold"
+
+output:
+  - platform: m5_chain_mic
+    id: chain_mic_red
+    m5_chain_mic_id: chain_mic
+    channel: rgb_red
+  - platform: m5_chain_mic
+    id: chain_mic_green
+    m5_chain_mic_id: chain_mic
+    channel: rgb_green
+  - platform: m5_chain_mic
+    id: chain_mic_blue
+    m5_chain_mic_id: chain_mic
+    channel: rgb_blue
+
+light:
+  - platform: rgb
+    name: Chain MIC RGB
+    red: chain_mic_red
+    green: chain_mic_green
+    blue: chain_mic_blue
+
+interval:
+  - interval: 60s
+    then:
+      - m5_chain_mic.set_threshold:
+          id: chain_mic
+          threshold: 900
+          save_to_flash: false
+      - m5_chain_mic.set_report_mode:
+          id: chain_mic
+          report_mode: true
+      - m5_chain_mic.set_trigger_interval:
+          id: chain_mic
+          trigger_interval: 300ms

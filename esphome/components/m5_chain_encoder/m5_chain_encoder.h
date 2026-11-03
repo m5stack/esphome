@@ -44,11 +44,9 @@ class M5ChainEncoder : public m5_chain_base::M5ChainBase {
   void on_unsolicited(const m5_chain_base::ChainFrame &frame) override;
   void on_request_timeout(uint8_t index, uint8_t command) override;
 
-  void poll_next_();
+  void poll_next_() override;
   m5_chain_base::ChainStatus send_pending_rgb_();
 
-  static constexpr uint32_t POLL_INTERVAL_ID = 0;
-  static constexpr uint32_t RESPONSE_TIMEOUT_MS = 150;
   static constexpr size_t SENSOR_SLOT_COUNT = 3;
 
   std::array<sensor::Sensor *, SENSOR_SLOT_COUNT> sensors_{};

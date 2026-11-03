@@ -4,11 +4,9 @@ import esphome.config_validation as cv
 from esphome.const import DEVICE_CLASS_DISTANCE, UNIT_MILLIMETER
 from esphome.types import ConfigType
 
-from .. import M5ChainToF, m5_chain_tof_ns
+from .. import CONF_M5_CHAIN_TOF_ID, M5ChainToF, m5_chain_tof_ns
 
 DEPENDENCIES = ["m5_chain_tof"]
-
-CONF_M5_CHAIN_TOF_ID = "m5_chain_tof_id"
 
 M5ChainToFSensor = m5_chain_tof_ns.class_(
     "M5ChainToFSensor", sensor.Sensor, cg.Parented.template(M5ChainToF)

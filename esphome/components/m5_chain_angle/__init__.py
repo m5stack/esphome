@@ -1,13 +1,35 @@
 import esphome.codegen as cg
-from esphome.components import sensor, uart
+from esphome.components import m5_chain_base, uart
+import esphome.config_validation as cv
+from esphome.const import CONF_ID
+from esphome.types import ConfigType
 
+AUTO_LOAD = ["m5_chain_base", "sensor"]
 CODEOWNERS = ["@Jasionf"]
+DEPENDENCIES = ["uart"]
+DOMAIN = "m5_chain_angle"
+MULTI_CONF = True
 
-m5stack_chain_angle_ns = cg.esphome_ns.namespace("m5stack_chain_angle")
-ChainAngleSensor = m5stack_chain_angle_ns.class_(
-    "ChainAngleSensor",
-    sensor.Sensor,
-    cg.PollingComponent,
-    uart.UARTDevice,
+CONF_M5_CHAIN_ANGLE_ID = "m5_chain_angle_id"
+
+m5_chain_angle_ns = cg.esphome_ns.namespace("m5_chain_angle")
+M5ChainAngle = m5_chain_angle_ns.class_("M5ChainAngle", m5_chain_base.M5ChainBase)
+
+CONFIG_SCHEMA = (
+    cv.Schema({cv.GenerateID(): cv.declare_id(M5ChainAngle)})
+    .extend(m5_chain_base.BASE_SCHEMA)
+    .extend(cv.COMPONENT_SCHEMA)
+    .extend(uart.UART_DEVICE_SCHEMA)
 )
 
+FINAL_VALIDATE_SCHEMA = uart.final_validate_device_schema(
+    DOMAIN, baud_rate=115200, data_bits=8, parity="NONE", stop_bits=1
+)
+
+
+async def to_code(config: ConfigType) -> None:
+    var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_component(var, config)
+    await uart.register_uart_device(var, config)
+    cg.add(var.set_chain_index(config[m5_chain_base.CONF_CHAIN_INDEX]))
+    cg.add(var.set_update_interval(config[m5_chain_base.CONF_UPDATE_INTERVAL]))

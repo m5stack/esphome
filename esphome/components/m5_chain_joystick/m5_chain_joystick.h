@@ -48,14 +48,12 @@ class M5ChainJoystick : public m5_chain_base::M5ChainBase {
   void on_unsolicited(const m5_chain_base::ChainFrame &frame) override;
   void on_request_timeout(uint8_t index, uint8_t command) override;
 
-  void poll_next_();
-  void handle_response_(const m5_chain_base::ChainFrame &frame, bool continue_polling);
+  void poll_next_() override;
+  void handle_response_(const m5_chain_base::ChainFrame &frame, bool is_request_response);
   void handle_button_status_(const m5_chain_base::ChainFrame &frame);
   bool has_sensor_type_(size_t type) const;
   m5_chain_base::ChainStatus send_pending_rgb_();
 
-  static constexpr uint32_t POLL_INTERVAL_ID = 0;
-  static constexpr uint32_t RESPONSE_TIMEOUT_MS = 250;
   static constexpr size_t SENSOR_TYPE_COUNT = 5;
   static constexpr size_t AXIS_COUNT = 2;
 

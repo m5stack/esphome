@@ -55,13 +55,12 @@ class M5ChainSwitch : public m5_chain_base::M5ChainBase {
   void on_unsolicited(const m5_chain_base::ChainFrame &frame) override;
   void on_request_timeout(uint8_t index, uint8_t command) override;
 
-  void poll_next_();
-  void handle_response_(const m5_chain_base::ChainFrame &frame, uint8_t slot, bool continue_polling);
+  void poll_next_() override;
+  void handle_response_(const m5_chain_base::ChainFrame &frame, uint8_t slot, bool is_request_response);
   void handle_status_report_(const m5_chain_base::ChainFrame &frame);
   bool has_sensor_(size_t slot) const;
   m5_chain_base::ChainStatus send_pending_rgb_();
 
-  static constexpr uint32_t EVENT_TRIGGER_POLL_INTERVAL_ID = 0;
   static constexpr size_t SENSOR_SLOT_COUNT = 5;
 
   std::array<sensor::Sensor *, SENSOR_SLOT_COUNT> sensors_{};

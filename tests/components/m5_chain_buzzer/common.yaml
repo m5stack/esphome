@@ -1,0 +1,61 @@
+m5_chain_buzzer:
+  id: chain_buzzer
+  uart_id: uart_bus
+  chain_index: 1
+
+output:
+  - platform: m5_chain_buzzer
+    id: chain_buzzer_output
+    m5_chain_buzzer_id: chain_buzzer
+  - platform: m5_chain_buzzer
+    id: chain_buzzer_red
+    m5_chain_buzzer_id: chain_buzzer
+    channel: rgb_red
+  - platform: m5_chain_buzzer
+    id: chain_buzzer_green
+    m5_chain_buzzer_id: chain_buzzer
+    channel: rgb_green
+  - platform: m5_chain_buzzer
+    id: chain_buzzer_blue
+    m5_chain_buzzer_id: chain_buzzer
+    channel: rgb_blue
+  - platform: m5_chain_buzzer
+    id: chain_buzzer_brightness
+    m5_chain_buzzer_id: chain_buzzer
+    channel: led_brightness
+
+rtttl:
+  output: chain_buzzer_output
+  id: chain_buzzer_rtttl
+
+interval:
+  - interval: 10s
+    then:
+      - m5_chain_buzzer.set_mode:
+          id: chain_buzzer
+          mode: auto
+      - m5_chain_buzzer.play:
+          id: chain_buzzer
+          frequency: 2700
+          duty: 50
+          time: 200ms
+      - m5_chain_buzzer.play_note:
+          id: chain_buzzer
+          note: 60
+          time: 200ms
+      - m5_chain_buzzer.set_frequency:
+          id: chain_buzzer
+          frequency: 2700
+      - m5_chain_buzzer.set_duty:
+          id: chain_buzzer
+          duty: 50
+      - m5_chain_buzzer.set_status:
+          id: chain_buzzer
+          status: false
+
+light:
+  - platform: rgb
+    name: Chain Buzzer RGB
+    red: chain_buzzer_red
+    green: chain_buzzer_green
+    blue: chain_buzzer_blue

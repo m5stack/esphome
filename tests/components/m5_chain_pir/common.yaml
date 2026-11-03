@@ -1,0 +1,50 @@
+m5_chain_pir:
+  id: chain_pir
+  uart_id: uart_bus
+  chain_index: 1
+  update_interval: 250ms
+
+binary_sensor:
+  - platform: m5_chain_pir
+    m5_chain_pir_id: chain_pir
+    name: Chain PIR
+    on_press:
+      - logger.log: "Chain PIR person arrived"
+    on_release:
+      - logger.log: "Chain PIR person left"
+
+output:
+  - platform: m5_chain_pir
+    id: chain_pir_red
+    m5_chain_pir_id: chain_pir
+    channel: rgb_red
+  - platform: m5_chain_pir
+    id: chain_pir_green
+    m5_chain_pir_id: chain_pir
+    channel: rgb_green
+  - platform: m5_chain_pir
+    id: chain_pir_blue
+    m5_chain_pir_id: chain_pir
+    channel: rgb_blue
+  - platform: m5_chain_pir
+    id: chain_pir_brightness
+    m5_chain_pir_id: chain_pir
+    channel: led_brightness
+
+light:
+  - platform: rgb
+    name: Chain PIR RGB
+    red: chain_pir_red
+    green: chain_pir_green
+    blue: chain_pir_blue
+
+interval:
+  - interval: 60s
+    then:
+      - m5_chain_pir.set_event_report:
+          id: chain_pir
+          event_report: true
+      - m5_chain_pir.set_keep_seconds:
+          id: chain_pir
+          keep_seconds: 10
+          save_to_flash: false

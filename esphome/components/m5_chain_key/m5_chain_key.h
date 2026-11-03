@@ -30,12 +30,9 @@ class M5ChainKey : public m5_chain_base::M5ChainBase {
   void on_unsolicited(const m5_chain_base::ChainFrame &frame) override;
   void on_request_timeout(uint8_t index, uint8_t command) override;
 
-  void poll_key_();
+  void poll_next_() override;
   void handle_key_status_(const m5_chain_base::ChainFrame &frame);
   m5_chain_base::ChainStatus send_pending_rgb_();
-
-  static constexpr uint32_t KEY_POLL_INTERVAL_ID = 0;
-  static constexpr uint32_t KEY_RESPONSE_TIMEOUT_MS = 250;
 
   binary_sensor::BinarySensor *key_sensor_{nullptr};
   uint8_t rgb_red_{0};

@@ -37,12 +37,9 @@ class M5ChainToF : public m5_chain_base::M5ChainBase {
   void on_unsolicited(const m5_chain_base::ChainFrame &frame) override;
   void on_request_timeout(uint8_t index, uint8_t command) override;
 
-  void poll_distance_();
+  void poll_next_() override;
   void handle_distance_(const m5_chain_base::ChainFrame &frame);
   m5_chain_base::ChainStatus send_pending_rgb_();
-
-  static constexpr uint32_t TOF_POLL_INTERVAL_ID = 0;
-  static constexpr uint32_t TOF_RESPONSE_TIMEOUT_MS = 250;
 
   sensor::Sensor *distance_sensor_{nullptr};
   uint8_t rgb_red_{0};

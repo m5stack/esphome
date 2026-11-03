@@ -4,11 +4,10 @@ import esphome.config_validation as cv
 from esphome.const import CONF_TYPE
 from esphome.types import ConfigType
 
-from .. import M5ChainJoystick, m5_chain_joystick_ns
+from .. import CONF_M5_CHAIN_JOYSTICK_ID, M5ChainJoystick, m5_chain_joystick_ns
 
 DEPENDENCIES = ["m5_chain_joystick"]
 
-CONF_M5_CHAIN_JOYSTICK_ID = "m5_chain_joystick_id"
 CONF_AXIS = "axis"
 CONF_RANGE_INDEX = "range_index"
 

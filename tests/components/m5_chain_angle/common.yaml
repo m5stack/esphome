@@ -1,0 +1,40 @@
+m5_chain_angle:
+  id: chain_angle
+  uart_id: uart_bus
+  chain_index: 1
+  update_interval: 250ms
+
+sensor:
+  - platform: m5_chain_angle
+    m5_chain_angle_id: chain_angle
+    type: adc_12
+    name: Chain Angle ADC 12
+  - platform: m5_chain_angle
+    m5_chain_angle_id: chain_angle
+    type: adc_8
+    name: Chain Angle ADC 8
+
+output:
+  - platform: m5_chain_angle
+    id: chain_angle_red
+    m5_chain_angle_id: chain_angle
+    channel: rgb_red
+  - platform: m5_chain_angle
+    id: chain_angle_green
+    m5_chain_angle_id: chain_angle
+    channel: rgb_green
+  - platform: m5_chain_angle
+    id: chain_angle_blue
+    m5_chain_angle_id: chain_angle
+    channel: rgb_blue
+  - platform: m5_chain_angle
+    id: chain_angle_brightness
+    m5_chain_angle_id: chain_angle
+    channel: led_brightness
+
+light:
+  - platform: rgb
+    name: Chain Angle RGB
+    red: chain_angle_red
+    green: chain_angle_green
+    blue: chain_angle_blue
