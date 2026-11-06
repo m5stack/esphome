@@ -18,6 +18,12 @@ static constexpr uint8_t RGB_SET_COMMAND =
 static constexpr uint8_t RGB_LIGHT_COMMAND =
     static_cast<uint8_t>(m5_chain_base::ChainCommand::CHAIN_COMMAND_SET_RGB_LIGHT);
 
+// Held tones use the module's longest auto-play duration (~65 s); the next frame
+// replaces the tone long before it expires. A 1 ms duty-0 frame is the silence.
+static constexpr uint16_t TONE_HOLD_DURATION_MS = 0xFFFF;
+static constexpr uint16_t TONE_SILENT_FREQUENCY = 1000;
+static constexpr uint16_t TONE_SILENT_DURATION_MS = 1;
+
 void M5ChainBuzzer::setup() {
   ESP_LOGCONFIG(TAG, "Setting up M5Stack Chain Buzzer (chain_index=%u)...", this->get_chain_index());
 }
@@ -63,6 +69,43 @@ m5_chain_base::ChainStatus M5ChainBuzzer::play_note(uint8_t note, uint16_t durat
   const uint8_t data[] = {note, static_cast<uint8_t>(duration_ms), static_cast<uint8_t>(duration_ms >> 8)};
   return this->request(this->get_chain_index(), BUZZER_COMMAND_PLAY_NOTE, data, sizeof(data));
 }
+
+void M5ChainBuzzer::set_tone(uint16_t frequency, uint8_t duty) {
+  if (frequency < 100 || frequency > 10000 || duty > 100)
+    return;
+  const bool changed = !this->tone_active_ || frequency != this->tone_frequency_ || duty != this->tone_duty_;
+  this->tone_active_ = true;
+  this->tone_frequency_ = frequency;
+  this->tone_duty_ = duty;
+  if (changed)
+    this->tone_pending_ = true;
+  this->service_tone_();
+}
+
+void M5ChainBuzzer::set_tone_off() {
+  if (!this->tone_active_ && !this->tone_pending_)
+    return;
+  this->tone_active_ = false;
+  this->tone_pending_ = true;
+  this->service_tone_();
+}
+
+void M5ChainBuzzer::service_tone_() {
+  if (!this->tone_pending_ || this->request_pending())
+    return;
+
+  // An auto-play frame stops once its duration has elapsed, and SET_STATUS only
+  // takes effect in manual mode, so a held tone uses the longest duration and a
+  // following note simply replaces it. Duty 0 silences the timer compare, which
+  // is the only way to cut an auto-play frame short.
+  const auto status = this->tone_active_
+                          ? this->play_auto(this->tone_frequency_, this->tone_duty_, TONE_HOLD_DURATION_MS)
+                          : this->play_auto(TONE_SILENT_FREQUENCY, 0, TONE_SILENT_DURATION_MS);
+  if (status == m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
+    this->tone_pending_ = false;
+}
+
+void M5ChainBuzzer::poll_next_() { this->service_tone_(); }
 
 m5_chain_base::ChainStatus M5ChainBuzzer::set_rgb_color(uint8_t red, uint8_t green, uint8_t blue) {
   this->rgb_red_ = red;
@@ -112,6 +155,7 @@ void M5ChainBuzzer::on_response(const m5_chain_base::ChainFrame &frame) {
       this->status_clear_warning();
       this->send_pending_rgb_();
     }
+    this->service_tone_();
     return;
   }
   if (frame.data_size < 1 || frame.data[0] == 0)
@@ -121,6 +165,7 @@ void M5ChainBuzzer::on_response(const m5_chain_base::ChainFrame &frame) {
     this->status_clear_warning();
   }
   this->send_pending_rgb_();
+  this->service_tone_();
 }
 
 void M5ChainBuzzer::on_request_timeout(uint8_t index, uint8_t command) {
@@ -130,6 +175,7 @@ void M5ChainBuzzer::on_request_timeout(uint8_t index, uint8_t command) {
   }
   this->status_set_warning();
   this->send_pending_rgb_();
+  this->service_tone_();
 }
 
 }  // namespace esphome::m5_chain_buzzer

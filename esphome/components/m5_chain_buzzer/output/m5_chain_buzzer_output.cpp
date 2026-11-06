@@ -10,12 +10,13 @@ void M5ChainBuzzerOutput::write_state(float state) {
   if (this->parent_ == nullptr)
     return;
   if (state <= 0.0f) {
-    this->parent_->set_status(false);
+    this->parent_->set_tone_off();
     return;
   }
-  // RTTTL calls update_frequency() immediately before write_state(). Use the
-  // buzzer's auto-play command so both values are sent in one transaction.
-  this->parent_->play_auto(this->frequency_, static_cast<uint8_t>(std::clamp(state, 0.0f, 1.0f) * 100.0f), 0);
+  // RTTTL calls update_frequency() immediately before this, so the held tone
+  // always uses the note that is about to play. The module cannot be told how
+  // long a level lasts, so the tone is held until the next write_state().
+  this->parent_->set_tone(this->frequency_, static_cast<uint8_t>(std::clamp(state, 0.0f, 1.0f) * 100.0f));
 }
 
 void M5ChainBuzzerOutput::update_frequency(float frequency) {
