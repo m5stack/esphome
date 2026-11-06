@@ -18,6 +18,8 @@ class M5ChainMonoLight : public light::AddressableLight, public Parented<M5Chain
 
  protected:
   light::ESPColorView get_view_internal(int32_t index) const override;
+  /// Map a 0..1 brightness onto the panel's eight levels, keeping any lit value above zero.
+  static uint8_t screen_brightness_level_(float level);
   uint8_t *buffer_{nullptr};
   uint8_t *effect_data_{nullptr};
 };

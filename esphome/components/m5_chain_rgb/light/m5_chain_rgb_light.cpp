@@ -20,7 +20,10 @@ void M5ChainRGBLight::setup() {
   std::memset(this->effect_data_, 0, 64);
 }
 
-void M5ChainRGBLight::dump_config() { ESP_LOGCONFIG(TAG, "M5Stack Chain RGB Addressable Light: 64 pixels (8x8)"); }
+void M5ChainRGBLight::dump_config() {
+  ESP_LOGCONFIG(TAG, "M5Stack Chain RGB Addressable Light: 64 pixels (8x8), module brightness pinned to %u%%",
+                MAX_SCREEN_BRIGHTNESS);
+}
 
 light::LightTraits M5ChainRGBLight::get_traits() {
   auto traits = light::LightTraits();
@@ -29,6 +32,14 @@ light::LightTraits M5ChainRGBLight::get_traits() {
 }
 
 void M5ChainRGBLight::write_state(light::LightState *) {
+  // The module multiplies every frame by its own brightness, which it keeps in flash: pin it to the
+  // top of its range so the panel always reaches the same maximum, whatever a previous tool saved
+  // there. Dimming stays in the pixel buffer, where the gamma curve is applied.
+  auto status = this->parent_->set_screen_brightness(MAX_SCREEN_BRIGHTNESS);
+  if (status != m5_chain_base::ChainStatus::CHAIN_STATUS_OK) {
+    this->status_set_warning();
+    return;
+  }
   uint8_t display_buffer[128]{};
   for (uint8_t index = 0; index < 64; index++) {
     const uint8_t *pixel = this->buffer_ + index * 3;
