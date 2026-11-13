@@ -11,13 +11,15 @@ ESPHOME_LOG_TAG(TAG, "m5_chain_mic");
 
 static constexpr uint8_t MIC_COMMAND_GET_ADC_12 = static_cast<uint8_t>(MicCommand::MIC_COMMAND_GET_ADC_12);
 static constexpr uint8_t MIC_COMMAND_GET_ADC_8 = static_cast<uint8_t>(MicCommand::MIC_COMMAND_GET_ADC_8);
-static constexpr uint8_t MIC_COMMAND_SET_THRESHOLD = static_cast<uint8_t>(MicCommand::MIC_COMMAND_SET_THRESHOLD);
+static constexpr uint8_t MIC_COMMAND_GET_THRESHOLD = static_cast<uint8_t>(MicCommand::MIC_COMMAND_GET_THRESHOLD);
 static constexpr uint8_t MIC_COMMAND_SET_REPORT_MODE = static_cast<uint8_t>(MicCommand::MIC_COMMAND_SET_REPORT_MODE);
 static constexpr uint8_t MIC_COMMAND_SET_TRIGGER_INTERVAL =
     static_cast<uint8_t>(MicCommand::MIC_COMMAND_SET_TRIGGER_INTERVAL);
 static constexpr uint8_t MIC_COMMAND_TRIGGER_REPORT = static_cast<uint8_t>(MicCommand::MIC_COMMAND_TRIGGER_REPORT);
-/// Report type code that marks a Chain MIC threshold report.
+/// Report type code that marks a Chain MIC threshold report, as defined by the protocol document.
 static constexpr uint8_t MIC_TRIGGER_REPORT_TYPE = 0x04;
+/// The internal firmware tags its threshold reports with 0x03 instead, so both codes are accepted.
+static constexpr uint8_t MIC_TRIGGER_REPORT_TYPE_INTERNAL_FW = 0x03;
 
 void M5ChainMic::setup() {
   ESP_LOGCONFIG(TAG, "Setting up M5Stack Chain MIC (chain_index=%u)...", this->get_chain_index());
@@ -29,7 +31,7 @@ void M5ChainMic::dump_config() {
   ESP_LOGCONFIG(TAG, "  Chain index: %u", this->get_chain_index());
 }
 
-void M5ChainMic::set_adc_sensor(MicSensorType type, sensor::Sensor *sensor) {
+void M5ChainMic::set_mic_sensor(MicSensorType type, sensor::Sensor *sensor) {
   const auto slot = static_cast<size_t>(type);
   if (slot < this->sensors_.size())
     this->sensors_[slot] = sensor;
@@ -42,20 +44,16 @@ void M5ChainMic::poll_next_() {
     const auto slot = this->poll_slot_++ % MIC_SENSOR_SLOT_COUNT;
     if (this->sensors_[slot] == nullptr)
       continue;
-    const uint8_t command =
-        slot == static_cast<size_t>(MicSensorType::MIC_SENSOR_ADC_8) ? MIC_COMMAND_GET_ADC_8 : MIC_COMMAND_GET_ADC_12;
+    uint8_t command = MIC_COMMAND_GET_ADC_12;
+    if (slot == static_cast<size_t>(MicSensorType::MIC_SENSOR_ADC_8)) {
+      command = MIC_COMMAND_GET_ADC_8;
+    } else if (slot == static_cast<size_t>(MicSensorType::MIC_SENSOR_THRESHOLD)) {
+      command = MIC_COMMAND_GET_THRESHOLD;
+    }
     if (this->request(this->get_chain_index(), command) != m5_chain_base::ChainStatus::CHAIN_STATUS_OK)
       this->status_set_warning();
     return;
   }
-}
-
-m5_chain_base::ChainStatus M5ChainMic::set_threshold(uint16_t threshold, bool save_to_flash) {
-  if (threshold > MIC_ADC_12_MAX)
-    return m5_chain_base::ChainStatus::CHAIN_STATUS_PARAMETER_ERROR;
-  const uint8_t data[] = {static_cast<uint8_t>(threshold & 0xFF), static_cast<uint8_t>(threshold >> 8),
-                          static_cast<uint8_t>(save_to_flash)};
-  return this->request(this->get_chain_index(), MIC_COMMAND_SET_THRESHOLD, data, sizeof(data));
 }
 
 m5_chain_base::ChainStatus M5ChainMic::set_report_mode(bool enabled) {
@@ -113,16 +111,19 @@ m5_chain_base::ChainStatus M5ChainMic::set_led_brightness(uint8_t brightness) {
 
 void M5ChainMic::on_response(const m5_chain_base::ChainFrame &frame) {
   if (frame.command == MIC_COMMAND_GET_ADC_12) {
-    this->publish_adc_(frame, MicSensorType::MIC_SENSOR_ADC_12);
+    this->publish_sensor_(frame, MicSensorType::MIC_SENSOR_ADC_12);
     return;
   }
   if (frame.command == MIC_COMMAND_GET_ADC_8) {
-    this->publish_adc_(frame, MicSensorType::MIC_SENSOR_ADC_8);
+    this->publish_sensor_(frame, MicSensorType::MIC_SENSOR_ADC_8);
+    return;
+  }
+  if (frame.command == MIC_COMMAND_GET_THRESHOLD) {
+    this->publish_sensor_(frame, MicSensorType::MIC_SENSOR_THRESHOLD);
     return;
   }
 
-  if (frame.command == MIC_COMMAND_SET_THRESHOLD || frame.command == MIC_COMMAND_SET_REPORT_MODE ||
-      frame.command == MIC_COMMAND_SET_TRIGGER_INTERVAL) {
+  if (frame.command == MIC_COMMAND_SET_REPORT_MODE || frame.command == MIC_COMMAND_SET_TRIGGER_INTERVAL) {
     if (frame.data_size < 1 || frame.data[0] == 0) {
       this->status_set_warning();
       return;
@@ -158,17 +159,22 @@ void M5ChainMic::on_unsolicited(const m5_chain_base::ChainFrame &frame) {
   if (frame.index != this->get_chain_index())
     return;
   // A response can arrive after the request timeout when it traverses several chain nodes.
-  // Treat a late ADC response like an on-time response so polling still updates the sensor.
+  // Treat a late polled response like an on-time response so the sensors still update.
   if (frame.command == MIC_COMMAND_GET_ADC_12) {
-    this->publish_adc_(frame, MicSensorType::MIC_SENSOR_ADC_12);
+    this->publish_sensor_(frame, MicSensorType::MIC_SENSOR_ADC_12);
     return;
   }
   if (frame.command == MIC_COMMAND_GET_ADC_8) {
-    this->publish_adc_(frame, MicSensorType::MIC_SENSOR_ADC_8);
+    this->publish_sensor_(frame, MicSensorType::MIC_SENSOR_ADC_8);
+    return;
+  }
+  if (frame.command == MIC_COMMAND_GET_THRESHOLD) {
+    this->publish_sensor_(frame, MicSensorType::MIC_SENSOR_THRESHOLD);
     return;
   }
   if (frame.command == MIC_COMMAND_TRIGGER_REPORT) {
-    if (frame.data_size < 2 || frame.data[1] != MIC_TRIGGER_REPORT_TYPE) {
+    if (frame.data_size < 2 ||
+        (frame.data[1] != MIC_TRIGGER_REPORT_TYPE && frame.data[1] != MIC_TRIGGER_REPORT_TYPE_INTERNAL_FW)) {
       this->status_set_warning();
       return;
     }
@@ -183,15 +189,17 @@ void M5ChainMic::on_unsolicited(const m5_chain_base::ChainFrame &frame) {
   }
 }
 
-void M5ChainMic::publish_adc_(const m5_chain_base::ChainFrame &frame, MicSensorType type) {
+void M5ChainMic::publish_sensor_(const m5_chain_base::ChainFrame &frame, MicSensorType type) {
   const size_t slot = static_cast<size_t>(type);
-  const size_t required = type == MicSensorType::MIC_SENSOR_ADC_12 ? 2 : 1;
+  // The 8-bit ADC answer is one byte, the 12-bit ADC value and the threshold are 16-bit little endian.
+  const size_t required = type == MicSensorType::MIC_SENSOR_ADC_8 ? 1 : 2;
   if (frame.data_size < required) {
     this->status_set_warning();
     return;
   }
-  const float value = type == MicSensorType::MIC_SENSOR_ADC_12 ? encode_uint16(frame.data[1], frame.data[0])
-                                                               : static_cast<float>(frame.data[0]);
+  const float value = type == MicSensorType::MIC_SENSOR_ADC_8
+                          ? static_cast<float>(frame.data[0])
+                          : static_cast<float>(encode_uint16(frame.data[1], frame.data[0]));
   if (slot < this->sensors_.size() && this->sensors_[slot] != nullptr)
     this->sensors_[slot]->publish_state(value);
   this->timeout_warning_active_ = false;

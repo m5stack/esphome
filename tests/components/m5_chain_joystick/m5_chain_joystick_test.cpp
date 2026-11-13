@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -59,6 +61,10 @@ static std::vector<uint8_t> packet(uint8_t index, uint8_t command, const std::ve
   return {buffer.begin(), buffer.begin() + size};
 }
 
+static void wait_for_next_bus_slot() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(m5_chain_base::INTER_REQUEST_DELAY_MS + 2));
+}
+
 TEST(M5ChainJoystickTest, PublishesRawAndMappedValues) {
   MockUART uart;
   M5ChainJoystick joystick;
@@ -67,21 +73,27 @@ TEST(M5ChainJoystickTest, PublishesRawAndMappedValues) {
   sensor::Sensor mapped_x;
   joystick.set_uart_parent(&uart);
   joystick.set_chain_index(5);
+  joystick.set_update_interval(0);
   joystick.set_joystick_sensor(JoystickSensorType::JOYSTICK_SENSOR_ADC_16, 0, 0, &raw_x);
   joystick.set_joystick_sensor(JoystickSensorType::JOYSTICK_SENSOR_ADC_16, 1, 0, &raw_y);
   joystick.set_joystick_sensor(JoystickSensorType::JOYSTICK_SENSOR_MAPPED_16, 0, 0, &mapped_x);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(3);
   joystick.setup();
+  joystick.loop();
   uart.inject(packet(5, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_ADC_16), {0x34, 0x12, 0xCD, 0xAB}));
   joystick.loop();
   EXPECT_FLOAT_EQ(raw_x.state, 0x1234);
   EXPECT_FLOAT_EQ(raw_y.state, 0xABCD);
 
+  wait_for_next_bus_slot();
+  joystick.loop();
   uart.inject(
       packet(5, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_MAPPED_16), {0xFE, 0xFF, 0x02, 0x80}));
   joystick.loop();
   EXPECT_FLOAT_EQ(mapped_x.state, -2);
+  wait_for_next_bus_slot();
+  joystick.loop();
 }
 
 TEST(M5ChainJoystickTest, PublishesEightBitAndMappingRangeValues) {
@@ -92,26 +104,34 @@ TEST(M5ChainJoystickTest, PublishesEightBitAndMappingRangeValues) {
   sensor::Sensor range;
   joystick.set_uart_parent(&uart);
   joystick.set_chain_index(8);
+  joystick.set_update_interval(0);
   joystick.set_joystick_sensor(JoystickSensorType::JOYSTICK_SENSOR_ADC_8, 0, 0, &adc_x);
   joystick.set_joystick_sensor(JoystickSensorType::JOYSTICK_SENSOR_MAPPED_8, 1, 0, &mapped_y);
   joystick.set_joystick_sensor(JoystickSensorType::JOYSTICK_SENSOR_MAPPING_RANGE, 0, 3, &range);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(4);
   joystick.setup();
+  joystick.loop();
   uart.inject(packet(8, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_ADC_8), {200, 150}));
   joystick.loop();
   EXPECT_FLOAT_EQ(adc_x.state, 200);
 
+  wait_for_next_bus_slot();
+  joystick.loop();
   uart.inject(packet(8, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_MAPPED_8), {1, 0x80}));
   joystick.loop();
   EXPECT_FLOAT_EQ(mapped_y.state, -128);
 
+  wait_for_next_bus_slot();
+  joystick.loop();
   std::vector<uint8_t> range_data(16, 0);
   range_data[6] = 0x78;
   range_data[7] = 0x56;
   uart.inject(packet(8, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_MAPPING_RANGE), range_data));
   joystick.loop();
   EXPECT_FLOAT_EQ(range.state, 0x5678);
+  wait_for_next_bus_slot();
+  joystick.loop();
 }
 
 TEST(M5ChainJoystickTest, PublishesButtonAndUsesSharedRgbApi) {
@@ -120,17 +140,18 @@ TEST(M5ChainJoystickTest, PublishesButtonAndUsesSharedRgbApi) {
   binary_sensor::BinarySensor button;
   joystick.set_uart_parent(&uart);
   joystick.set_chain_index(11);
+  joystick.set_update_interval(0);
   joystick.set_button_sensor(&button);
 
-  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(2);
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   joystick.setup();
+  joystick.loop();
   uart.inject(packet(11, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_BUTTON_STATUS), {1}));
   joystick.loop();
   EXPECT_TRUE(button.get_state());
 
   joystick.set_button_sensor(nullptr);
-  uart.inject(packet(11, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_BUTTON_STATUS), {1}));
-  joystick.loop();
+  wait_for_next_bus_slot();
   EXPECT_CALL(uart, write_array(::testing::_, 14)).Times(1);
   EXPECT_EQ(joystick.set_rgb_color(4, 5, 6), m5_chain_base::ChainStatus::CHAIN_STATUS_OK);
 }
@@ -141,11 +162,13 @@ TEST(M5ChainJoystickTest, FlushesRgbUpdateAfterPollingResponse) {
   sensor::Sensor adc_x;
   joystick.set_uart_parent(&uart);
   joystick.set_chain_index(3);
+  joystick.set_update_interval(0);
   joystick.set_joystick_sensor(JoystickSensorType::JOYSTICK_SENSOR_ADC_16, 0, 0, &adc_x);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   EXPECT_CALL(uart, write_array(::testing::_, 14)).Times(1);
   joystick.setup();
+  joystick.loop();
 
   // The output update arrives while the joystick poll request is outstanding.
   EXPECT_EQ(joystick.set_rgb_color_component(0, 10), m5_chain_base::ChainStatus::CHAIN_STATUS_OK);
@@ -154,6 +177,8 @@ TEST(M5ChainJoystickTest, FlushesRgbUpdateAfterPollingResponse) {
   EXPECT_TRUE(joystick.request_pending());
 
   uart.inject(packet(3, static_cast<uint8_t>(JoystickCommand::JOYSTICK_COMMAND_GET_ADC_16), {0x34, 0x12, 0x78, 0x56}));
+  joystick.loop();
+  wait_for_next_bus_slot();
   joystick.loop();
 
   EXPECT_TRUE(joystick.request_pending());

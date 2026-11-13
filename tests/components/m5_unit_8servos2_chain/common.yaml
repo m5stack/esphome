@@ -1,0 +1,124 @@
+m5_unit_8servos2_chain:
+  id: chain_servos
+  uart_id: uart_bus
+  chain_index: 5
+  update_interval: 5s
+
+interval:
+  - interval: 60s
+    then:
+      - m5_unit_8servos2_chain.set_mode:
+          id: chain_servos
+          channel: 0
+          mode: servo
+      - m5_unit_8servos2_chain.set_servo_angle:
+          id: chain_servos
+          channel: 0
+          angle: 90
+      - m5_unit_8servos2_chain.set_servo_angles:
+          id: chain_servos
+          angles: [0, 45, 90, 135, 180, 90, 45, 0]
+      - m5_unit_8servos2_chain.set_mode:
+          id: chain_servos
+          channel: 1
+          mode: pwm
+      - m5_unit_8servos2_chain.set_pwm_duty:
+          id: chain_servos
+          channel: 1
+          duty: 50
+      - m5_unit_8servos2_chain.set_pwm_duties:
+          id: chain_servos
+          duties: [0, 10, 20, 30, 40, 50, 60, 70]
+      - m5_unit_8servos2_chain.set_mode:
+          id: chain_servos
+          channel: 2
+          mode: output
+      - m5_unit_8servos2_chain.set_output_level:
+          id: chain_servos
+          channel: 2
+          level: true
+      - m5_unit_8servos2_chain.set_output_levels:
+          id: chain_servos
+          levels: [true, false, true, false, true, false, true, false]
+      - m5_unit_8servos2_chain.set_mode:
+          id: chain_servos
+          channel: 3
+          mode: input
+      - m5_unit_8servos2_chain.set_input_pull:
+          id: chain_servos
+          channel: 3
+          pull: up
+      - m5_unit_8servos2_chain.set_mode:
+          id: chain_servos
+          channel: 4
+          mode: rgb
+      - m5_unit_8servos2_chain.set_rgb_config:
+          id: chain_servos
+          channel: 4
+          count: 4
+          refresh: false
+      - m5_unit_8servos2_chain.set_rgb:
+          id: chain_servos
+          index: 0
+          red: 255
+          green: 0
+          blue: 0
+
+output:
+  - platform: m5_unit_8servos2_chain
+    id: servo_out_0
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 0
+    type: servo
+  - platform: m5_unit_8servos2_chain
+    id: pwm_out_1
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 1
+    type: pwm
+  - platform: m5_unit_8servos2_chain
+    id: digital_out_2
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 2
+    type: digital
+
+servo:
+  - id: servo_0
+    output: servo_out_0
+    min_level: 0%
+    max_level: 100%
+
+number:
+  - platform: m5_unit_8servos2_chain
+    name: "Servo angle 0"
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 0
+    type: angle
+  - platform: m5_unit_8servos2_chain
+    name: "PWM duty 1"
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 1
+    type: duty
+
+switch:
+  - platform: output
+    name: "Digital channel 2"
+    output: digital_out_2
+  - platform: m5_unit_8servos2_chain
+    name: "Channel 3 output"
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 3
+
+light:
+  - platform: monochromatic
+    name: "PWM channel 1"
+    output: pwm_out_1
+  - platform: m5_unit_8servos2_chain
+    name: "Channel 4 LEDs"
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 4
+    num_leds: 4
+  - platform: m5_unit_8servos2_chain
+    name: "Channel 5 LEDs"
+    m5_unit_8servos2_chain_id: chain_servos
+    channel: 5
+    num_leds: 2

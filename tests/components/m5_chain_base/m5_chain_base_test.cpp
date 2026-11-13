@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -52,6 +54,8 @@ class TestBase : public M5ChainBase {
   std::vector<FrameRecord> responses;
   std::vector<FrameRecord> unsolicited;
   std::vector<std::pair<uint8_t, uint8_t>> timeouts;
+  uint8_t poll_count{0};
+  bool polling_enabled{false};
   uint8_t last_rgb_component{0};
   uint8_t last_rgb_value{0};
   uint8_t last_brightness{0};
@@ -74,6 +78,29 @@ class TestBase : public M5ChainBase {
   void on_response(const ChainFrame &frame) override { this->responses.push_back(record_(frame)); }
   void on_unsolicited(const ChainFrame &frame) override { this->unsolicited.push_back(record_(frame)); }
   void on_request_timeout(uint8_t index, uint8_t command) override { this->timeouts.emplace_back(index, command); }
+  void poll_next_() override {
+    if (!this->polling_enabled)
+      return;
+    this->poll_count++;
+    this->request(this->get_chain_index(), 0x50);
+  }
+};
+
+/// Re-queues the next frame as soon as a response arrives, like the display and light frames of a
+/// Chain Mono or Chain RGB do while a panel is being refreshed.
+class StreamingBase : public TestBase {
+ public:
+  void start_stream() {
+    this->request(this->get_chain_index(), 0x31, this->frame_.data(), static_cast<uint16_t>(this->frame_.size()));
+  }
+
+ protected:
+  void on_response(const ChainFrame &frame) override {
+    TestBase::on_response(frame);
+    this->request(this->get_chain_index(), 0x31, this->frame_.data(), static_cast<uint16_t>(this->frame_.size()));
+  }
+
+  std::array<uint8_t, 8> frame_{};
 };
 
 static std::vector<uint8_t> packet(uint8_t index, uint8_t command, std::initializer_list<uint8_t> data = {}) {
@@ -139,6 +166,22 @@ TEST(M5ChainBaseTest, RecoversFromNoiseAndBadFrame) {
   EXPECT_EQ(base.unsolicited[0].data[0], 0x02);
 }
 
+TEST(M5ChainBaseTest, ParsesLargeReceiveBurstsWithoutDroppingFrames) {
+  MockUART uart;
+  TestBase base;
+  base.set_uart_parent(&uart);
+  std::vector<uint8_t> burst;
+  for (uint8_t value = 0; value < 100; value++) {
+    const auto frame = packet(1, 0x50, {value});
+    burst.insert(burst.end(), frame.begin(), frame.end());
+  }
+
+  uart.inject(burst);
+  base.loop();
+
+  EXPECT_EQ(base.unsolicited.size(), 100u);
+}
+
 TEST(M5ChainBaseTest, MatchesOnePendingRequestAndKeepsOtherFramesUnsolicited) {
   MockUART uart;
   TestBase base;
@@ -158,28 +201,170 @@ TEST(M5ChainBaseTest, MatchesOnePendingRequestAndKeepsOtherFramesUnsolicited) {
   EXPECT_EQ(base.unsolicited[0].index, 2);
 }
 
-TEST(M5ChainBaseTest, DispatchesFramesToAllInstancesSharingUart) {
+TEST(M5ChainBaseTest, DoesNotMatchResponseForRequestUntilItHasBeenSent) {
   MockUART uart;
   TestBase first;
   TestBase second;
   first.set_uart_parent(&uart);
   second.set_uart_parent(&uart);
 
-  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(2);
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   EXPECT_EQ(first.request(1, 0x50), ChainStatus::CHAIN_STATUS_OK);
   EXPECT_EQ(second.request(2, 0x50), ChainStatus::CHAIN_STATUS_OK);
+  ::testing::Mock::VerifyAndClearExpectations(&uart);
+
+  uart.inject(packet(2, 0x50, {0x22}));
+  first.loop();
+
+  EXPECT_TRUE(second.request_pending());
+  EXPECT_TRUE(second.responses.empty());
+  ASSERT_EQ(second.unsolicited.size(), 1u);
+  EXPECT_EQ(second.unsolicited[0].index, 2);
 
   uart.inject(packet(1, 0x50, {0x11}));
-  uart.inject(packet(2, 0x50, {0x22}));
+  first.loop();
+  std::this_thread::sleep_for(std::chrono::milliseconds(INTER_REQUEST_DELAY_MS + 2));
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  first.loop();
+
+  uart.inject(packet(2, 0x50, {0x33}));
+  first.loop();
+  EXPECT_FALSE(second.request_pending());
+  ASSERT_EQ(second.responses.size(), 1u);
+  EXPECT_EQ(second.responses[0].data[0], 0x33);
+}
+
+TEST(M5ChainBaseTest, SerializesRequestsOnSharedUartAndEnforcesInterRequestDelay) {
+  MockUART uart;
+  TestBase first;
+  TestBase second;
+  first.set_uart_parent(&uart);
+  second.set_uart_parent(&uart);
+
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  EXPECT_EQ(first.request(1, 0x50), ChainStatus::CHAIN_STATUS_OK);
+  EXPECT_EQ(second.request(2, 0x50), ChainStatus::CHAIN_STATUS_OK);
+  EXPECT_TRUE(first.request_pending());
+  EXPECT_TRUE(second.request_pending());
+
+  uart.inject(packet(1, 0x50, {0x11}));
   first.loop();
   second.loop();
 
   ASSERT_EQ(first.responses.size(), 1u);
-  ASSERT_EQ(second.responses.size(), 1u);
   EXPECT_EQ(first.responses[0].index, 1);
   EXPECT_EQ(first.responses[0].data[0], 0x11);
+  EXPECT_TRUE(second.request_pending());
+  EXPECT_TRUE(second.responses.empty());
+  ::testing::Mock::VerifyAndClearExpectations(&uart);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(INTER_REQUEST_DELAY_MS + 2));
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  first.loop();
+  ::testing::Mock::VerifyAndClearExpectations(&uart);
+
+  uart.inject(packet(2, 0x50, {0x22}));
+  first.loop();
+  ASSERT_EQ(second.responses.size(), 1u);
   EXPECT_EQ(second.responses[0].index, 2);
   EXPECT_EQ(second.responses[0].data[0], 0x22);
+}
+
+TEST(M5ChainBaseTest, RetriesTimedOutRequestAfterBackoff) {
+  MockUART uart;
+  TestBase base;
+  base.set_uart_parent(&uart);
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  EXPECT_EQ(base.request(1, 0x50, 2), ChainStatus::CHAIN_STATUS_OK);
+  ::testing::Mock::VerifyAndClearExpectations(&uart);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(4));
+  base.loop();
+  EXPECT_TRUE(base.request_pending());
+  EXPECT_TRUE(base.timeouts.empty());
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_BACKOFF_MS + INTER_REQUEST_DELAY_MS + 2));
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  base.loop();
+  ::testing::Mock::VerifyAndClearExpectations(&uart);
+
+  uart.inject(packet(1, 0x50, {0x33}));
+  base.loop();
+  EXPECT_FALSE(base.request_pending());
+  ASSERT_EQ(base.responses.size(), 1u);
+  EXPECT_EQ(base.responses[0].data[0], 0x33);
+}
+
+TEST(M5ChainBaseTest, PollingUsesRoundRobinAcrossSharedUartInstances) {
+  MockUART uart;
+  TestBase first;
+  TestBase second;
+  first.set_uart_parent(&uart);
+  first.set_chain_index(1);
+  first.set_update_interval(0);
+  first.polling_enabled = true;
+  second.set_uart_parent(&uart);
+  second.set_chain_index(2);
+  second.set_update_interval(0);
+  second.polling_enabled = true;
+
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  first.loop();
+  EXPECT_EQ(first.poll_count, 1);
+  EXPECT_EQ(second.poll_count, 0);
+  ::testing::Mock::VerifyAndClearExpectations(&uart);
+
+  uart.inject(packet(1, 0x50, {0x11}));
+  first.loop();
+  std::this_thread::sleep_for(std::chrono::milliseconds(INTER_REQUEST_DELAY_MS + 2));
+
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  first.loop();
+  EXPECT_EQ(first.poll_count, 1);
+  EXPECT_EQ(second.poll_count, 1);
+}
+
+TEST(M5ChainBaseTest, PollingSkipsInstancesWithoutConfiguredRequests) {
+  MockUART uart;
+  TestBase first;
+  TestBase second;
+  first.set_uart_parent(&uart);
+  first.set_update_interval(0);
+  second.set_uart_parent(&uart);
+  second.set_update_interval(0);
+  second.polling_enabled = true;
+
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
+  first.loop();
+
+  EXPECT_EQ(first.poll_count, 0);
+  EXPECT_EQ(second.poll_count, 1);
+  EXPECT_TRUE(second.request_pending());
+}
+
+TEST(M5ChainBaseTest, StreamingInstanceDoesNotStarvePolling) {
+  MockUART uart;
+  StreamingBase streaming;
+  TestBase poller;
+  streaming.set_uart_parent(&uart);
+  streaming.set_chain_index(1);
+  streaming.set_update_interval(SCHEDULER_DONT_RUN);
+  poller.set_uart_parent(&uart);
+  poller.set_chain_index(2);
+  poller.set_update_interval(0);
+  poller.polling_enabled = true;
+
+  EXPECT_CALL(uart, write_array(::testing::_, ::testing::_)).Times(::testing::AnyNumber());
+  streaming.start_stream();
+
+  // The response re-queues the next frame in the same tick, so the bus is never idle on its own.
+  uart.inject(packet(1, 0x31, {0x01}));
+  streaming.loop();
+  EXPECT_TRUE(streaming.request_pending());
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(INTER_REQUEST_DELAY_MS + 2));
+  streaming.loop();
+  EXPECT_EQ(poller.poll_count, 1) << "the poll of the other instance must win over the re-queued frame";
 }
 
 TEST(M5ChainBaseTest, SupportsDisablingPolling) {

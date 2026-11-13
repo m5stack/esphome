@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <cstdint>
+#include <chrono>
+#include <thread>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -51,16 +53,22 @@ static std::vector<uint8_t> packet(uint8_t index, uint8_t command, std::initiali
   return {buffer.begin(), buffer.begin() + size};
 }
 
+static void wait_for_next_bus_slot() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(m5_chain_base::INTER_REQUEST_DELAY_MS + 2));
+}
+
 TEST(M5ChainKeyTest, PublishesButtonStatusFromBaseParser) {
   MockUART uart;
   M5ChainKey key;
   binary_sensor::BinarySensor sensor;
   key.set_uart_parent(&uart);
   key.set_chain_index(7);
+  key.set_update_interval(0);
   key.set_key_sensor(&sensor);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   key.setup();
+  key.loop();
   uart.inject(packet(7, KEY_STATUS_COMMAND, {1}));
   key.loop();
 
@@ -82,6 +90,7 @@ TEST(M5ChainKeyTest, AcceptsLateButtonStatusAsUnsolicitedResponse) {
   binary_sensor::BinarySensor sensor;
   key.set_uart_parent(&uart);
   key.set_key_sensor(&sensor);
+  key.setup();
 
   // No request is pending here, so this exercises the late-response path directly.
   uart.inject(packet(1, KEY_STATUS_COMMAND, {1}));
@@ -119,6 +128,8 @@ TEST(M5ChainKeyTest, CombinesRgbComponentsAcrossOutputUpdates) {
   uart.inject(packet(4, static_cast<uint8_t>(m5_chain_base::ChainCommand::CHAIN_COMMAND_SET_RGB_VALUE), {1}));
   key.loop();
   EXPECT_TRUE(key.request_pending());
+  wait_for_next_bus_slot();
+  key.loop();
 }
 
 }  // namespace

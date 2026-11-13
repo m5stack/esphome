@@ -1,0 +1,99 @@
+axp2101:
+  id: pmu
+  i2c_id: i2c_bus
+
+sensor:
+  - platform: axp2101
+    axp_id: pmu
+    battery_voltage:
+      name: Battery Voltage
+    battery_level:
+      name: Battery Level
+    die_temperature:
+      name: PMIC Temperature
+
+binary_sensor:
+  - platform: axp2101
+    axp_id: pmu
+    battery_charging:
+      name: Charging
+
+switch:
+  - platform: axp2101
+    axp_id: pmu
+    rail: ALDO3
+    name: Peripherals
+  - platform: axp2101
+    axp_id: pmu
+    rail: DCDC1
+    name: MCU Power
+    restore_mode: ALWAYS_ON
+  - platform: axp2101
+    axp_id: pmu
+    charging:
+      name: Charging
+    gauge:
+      name: Fuel Gauge
+      restore_mode: RESTORE_DEFAULT_ON
+
+output:
+  - platform: axp2101
+    axp_id: pmu
+    rail: DCDC3
+    id: backlight_voltage
+    min_voltage: 2800
+    max_voltage: 3300
+    dvm: true
+
+light:
+  - platform: monochromatic
+    name: Display
+    output: backlight_voltage
+    gamma_correct: 1.0
+    default_transition_length: 0s
+
+event:
+  - platform: axp2101
+    axp_id: pmu
+    name: PMU Event
+  - platform: axp2101
+    axp_id: pmu
+    id: power_key_events
+    events: [power_key_short_press, power_key_long_press]
+    device_class: button
+
+button:
+  - platform: axp2101
+    axp_id: pmu
+    shutdown:
+      name: Power Off
+    restart:
+      name: Power Cycle
+    reset_gauge:
+      name: Reset Fuel Gauge
+
+select:
+  - platform: axp2101
+    axp_id: pmu
+    charge_current:
+      name: Charge Current
+    charge_voltage:
+      name: Charge Voltage
+    input_current_limit:
+      name: USB Current Limit
+    power_key_long_press:
+      name: Power Key Hold Time
+
+number:
+  - platform: axp2101
+    axp_id: pmu
+    battery_low_warning:
+      name: Low Battery Warning
+    battery_low_shutdown:
+      name: Low Battery Shutdown
+    input_voltage_limit:
+      name: Input Voltage Limit
+    precharge_current:
+      name: Precharge Current
+    termination_current:
+      name: Termination Current

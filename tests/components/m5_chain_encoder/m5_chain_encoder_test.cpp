@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -50,6 +52,10 @@ static std::vector<uint8_t> packet(uint8_t index, uint8_t command, std::initiali
   return {buffer.begin(), buffer.begin() + size};
 }
 
+static void wait_for_next_bus_slot() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(m5_chain_base::INTER_REQUEST_DELAY_MS + 2));
+}
+
 TEST(M5ChainEncoderTest, PublishesSignedLittleEndianValues) {
   MockUART uart;
   M5ChainEncoder encoder;
@@ -57,18 +63,24 @@ TEST(M5ChainEncoderTest, PublishesSignedLittleEndianValues) {
   sensor::Sensor increment;
   encoder.set_uart_parent(&uart);
   encoder.set_chain_index(6);
+  encoder.set_update_interval(0);
   encoder.set_encoder_sensor(EncoderSensorType::ENCODER_SENSOR_VALUE, &value);
   encoder.set_encoder_sensor(EncoderSensorType::ENCODER_SENSOR_INCREMENT, &increment);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(3);
   encoder.setup();
+  encoder.loop();
   uart.inject(packet(6, static_cast<uint8_t>(EncoderCommand::ENCODER_COMMAND_GET_VALUE), {0xFE, 0xFF}));
   encoder.loop();
   EXPECT_FLOAT_EQ(value.state, -2);
 
+  wait_for_next_bus_slot();
+  encoder.loop();
   uart.inject(packet(6, static_cast<uint8_t>(EncoderCommand::ENCODER_COMMAND_GET_INCREMENT), {0x34, 0x12}));
   encoder.loop();
   EXPECT_FLOAT_EQ(increment.state, 0x1234);
+  wait_for_next_bus_slot();
+  encoder.loop();
 }
 
 TEST(M5ChainEncoderTest, RoutesRequestsToConfiguredChainIndex) {
@@ -77,10 +89,12 @@ TEST(M5ChainEncoderTest, RoutesRequestsToConfiguredChainIndex) {
   sensor::Sensor direction;
   encoder.set_uart_parent(&uart);
   encoder.set_chain_index(9);
+  encoder.set_update_interval(0);
   encoder.set_encoder_sensor(EncoderSensorType::ENCODER_SENSOR_AB_STATUS, &direction);
 
-  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(2);
+  EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   encoder.setup();
+  encoder.loop();
   uart.inject(packet(9, static_cast<uint8_t>(EncoderCommand::ENCODER_COMMAND_GET_AB_STATUS), {1}));
   encoder.loop();
   EXPECT_FLOAT_EQ(direction.state, 1);
@@ -103,11 +117,13 @@ TEST(M5ChainEncoderTest, FlushesRgbUpdateAfterPollingResponse) {
   sensor::Sensor value;
   encoder.set_uart_parent(&uart);
   encoder.set_chain_index(4);
+  encoder.set_update_interval(0);
   encoder.set_encoder_sensor(EncoderSensorType::ENCODER_SENSOR_VALUE, &value);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   EXPECT_CALL(uart, write_array(::testing::_, 14)).Times(1);
   encoder.setup();
+  encoder.loop();
 
   // The output update arrives while the encoder poll request is outstanding.
   EXPECT_EQ(encoder.set_rgb_color_component(0, 10), m5_chain_base::ChainStatus::CHAIN_STATUS_OK);
@@ -116,6 +132,8 @@ TEST(M5ChainEncoderTest, FlushesRgbUpdateAfterPollingResponse) {
   EXPECT_TRUE(encoder.request_pending());
 
   uart.inject(packet(4, static_cast<uint8_t>(EncoderCommand::ENCODER_COMMAND_GET_VALUE), {0x34, 0x12}));
+  encoder.loop();
+  wait_for_next_bus_slot();
   encoder.loop();
 
   EXPECT_TRUE(encoder.request_pending());

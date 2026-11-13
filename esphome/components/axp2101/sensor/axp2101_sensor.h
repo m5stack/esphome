@@ -1,35 +1,52 @@
 #pragma once
-#include "esphome/core/component.h"
+
+#include "esphome/components/axp_base/axp_base.h"
 #include "esphome/components/sensor/sensor.h"
-#include "esphome/components/binary_sensor/binary_sensor.h"
-#include "../axp2101.h"
+#include "esphome/core/component.h"
 
-namespace esphome {
-namespace axp2101 {
+namespace esphome::axp2101 {
 
+/// A sensor entity fed by the PMIC.
+///
+/// The hub owns the polling: once per `update_interval` it refreshes its own
+/// cache and then asks every registered entity to publish. A sensor therefore
+/// never polls on its own, so adding entities costs no extra bus traffic and the
+/// I2C timing stays under the hub's control.
 class AXP2101Sensor : public sensor::Sensor,
-                      public PollingComponent,
-                      public Parented<AXP2101>
-{
+                      public Component,
+                      public Parented<axp_base::AxpComponent>,
+                      public axp_base::AxpPolledEntity {
+ public:
+  void setup() override {}
+  void dump_config() override;
 
-public:
-    void setup() override {};
-    void loop() override {};
-    void update() override;
-    void dump_config() override;
-    float get_setup_priority() const override { return setup_priority::DATA; }
-    // Sensors
-    void set_battery_level_sensor(sensor::Sensor *battery_level_sensor) { this->battery_level_sensor_ = battery_level_sensor; }
-    void set_axp_temperature_sensor(sensor::Sensor *axp_temperature_sensor) { this->axp_temperature_sensor_ = axp_temperature_sensor; }
-    void set_battery_voltage_sensor(sensor::Sensor *battery_voltage_sensor) { this->battery_voltage_sensor_ = battery_voltage_sensor; }
-    void set_battery_charging_binary_sensor(binary_sensor::BinarySensor *battery_charging_binary_sensor) { this->battery_charging_binary_sensor_ = battery_charging_binary_sensor; }
+  void publish_from_chip() override;
 
-private:
-    sensor::Sensor *battery_level_sensor_{nullptr};
-    sensor::Sensor *battery_voltage_sensor_{nullptr};
-    sensor::Sensor *axp_temperature_sensor_{nullptr};
-    binary_sensor::BinarySensor *battery_charging_binary_sensor_{nullptr};
+ protected:
+  /// Fill `value` with what should be published. Return false to publish
+  /// nothing, which is what happens on a bus error.
+  virtual bool read_value_(float &value) = 0;
 };
 
-}
-}
+/// A sensor backed by one ADC channel of the chip.
+class AXP2101AdcSensor : public AXP2101Sensor {
+ public:
+  /// Name of the channel as it appears in the model table.
+  void set_channel_name(const char *name) { this->channel_name_ = name; }
+
+  void setup() override;
+
+ protected:
+  bool read_value_(float &value) override;
+
+  const char *channel_name_{nullptr};
+  const axp_base::AxpAdcChannel *channel_{nullptr};
+};
+
+/// The state of charge reported by the chip's fuel gauge.
+class AXP2101SocSensor : public AXP2101Sensor {
+ protected:
+  bool read_value_(float &value) override;
+};
+
+}  // namespace esphome::axp2101

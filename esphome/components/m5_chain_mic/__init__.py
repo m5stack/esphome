@@ -4,7 +4,7 @@ from esphome import automation
 import esphome.codegen as cg
 from esphome.components import m5_chain_base, uart
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_THRESHOLD
+from esphome.const import CONF_ID
 from esphome.types import ConfigType
 
 AUTO_LOAD = ["binary_sensor", "m5_chain_base", "sensor"]
@@ -16,7 +16,6 @@ MULTI_CONF = True
 CONF_M5_CHAIN_MIC_ID = "m5_chain_mic_id"
 CONF_REPORT_MODE = "report_mode"
 CONF_TRIGGER_INTERVAL = "trigger_interval"
-CONF_SAVE_TO_FLASH = "save_to_flash"
 
 m5_chain_mic_ns = cg.esphome_ns.namespace("m5_chain_mic")
 M5ChainMic = m5_chain_mic_ns.class_("M5ChainMic", m5_chain_base.M5ChainBase)
@@ -63,20 +62,6 @@ def _validate_trigger_interval(value: timedelta) -> timedelta:
     return value
 
 
-automation.register_apply_action(
-    f"{DOMAIN}.set_threshold",
-    cv.Schema(
-        {
-            **_ACTION_ID,
-            cv.Required(CONF_THRESHOLD): cv.templatable(cv.int_range(min=0, max=4095)),
-            cv.Optional(CONF_SAVE_TO_FLASH, default=False): cv.templatable(cv.boolean),
-        }
-    ),
-    automation.ApplyCall(
-        "set_threshold({},{})",
-        ((CONF_THRESHOLD, cg.uint16), (CONF_SAVE_TO_FLASH, cg.bool_)),
-    ),
-)
 automation.register_apply_action(
     f"{DOMAIN}.set_report_mode",
     cv.Schema(

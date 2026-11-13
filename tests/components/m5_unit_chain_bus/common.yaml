@@ -1,0 +1,99 @@
+m5_unit_chain_bus:
+  id: chain_bus
+  uart_id: uart_bus
+  chain_index: 4
+  update_interval: 5s
+  on_i2c_read:
+    - logger.log:
+        format: "Unit ChainBus I2C read from address %u"
+        args: ["address"]
+  on_i2c_scan:
+    - logger.log: "Unit ChainBus I2C scan finished"
+  on_pin_level:
+    - logger.log:
+        format: "Unit ChainBus pin %u level changed to %d"
+        args: ["pin", "level"]
+  on_adc_value:
+    - logger.log:
+        format: "Unit ChainBus pin %u ADC value %u"
+        args: ["pin", "value"]
+
+output:
+  - platform: m5_unit_chain_bus
+    id: chain_bus_red
+    m5_unit_chain_bus_id: chain_bus
+    channel: rgb_red
+  - platform: m5_unit_chain_bus
+    id: chain_bus_green
+    m5_unit_chain_bus_id: chain_bus
+    channel: rgb_green
+  - platform: m5_unit_chain_bus
+    id: chain_bus_blue
+    m5_unit_chain_bus_id: chain_bus
+    channel: rgb_blue
+
+light:
+  - platform: rgb
+    name: Unit ChainBus RGB
+    red: chain_bus_red
+    green: chain_bus_green
+    blue: chain_bus_blue
+
+interval:
+  - interval: 60s
+    then:
+      - m5_unit_chain_bus.i2c_init:
+          id: chain_bus
+          speed: 100khz
+      - m5_unit_chain_bus.i2c_scan:
+          id: chain_bus
+      - m5_unit_chain_bus.i2c_write:
+          id: chain_bus
+          address: 0x50
+          data: [0x01, 0x02, 0x03]
+      - m5_unit_chain_bus.i2c_read:
+          id: chain_bus
+          address: 0x50
+          length: 4
+      - m5_unit_chain_bus.i2c_mem_read:
+          id: chain_bus
+          address: 0x50
+          register: 0x0010
+          register_size: 16bit
+          length: 2
+      - m5_unit_chain_bus.i2c_mem_write:
+          id: chain_bus
+          address: 0x50
+          register: 0x0010
+          register_size: 16bit
+          data: [0xAA]
+      - m5_unit_chain_bus.set_output_mode:
+          id: chain_bus
+          pin: 1
+          mode: push_pull
+          pull: none
+      - m5_unit_chain_bus.set_output_level:
+          id: chain_bus
+          pin: 1
+          level: true
+      - m5_unit_chain_bus.get_output_level:
+          id: chain_bus
+          pin: 1
+      - m5_unit_chain_bus.set_input_mode:
+          id: chain_bus
+          pin: 2
+          pull: up
+      - m5_unit_chain_bus.get_input_level:
+          id: chain_bus
+          pin: 2
+      - m5_unit_chain_bus.set_nvic_mode:
+          id: chain_bus
+          pin: 2
+          pull: up
+          trigger: falling
+      - m5_unit_chain_bus.set_adc_mode:
+          id: chain_bus
+          pin: 2
+      - m5_unit_chain_bus.get_adc_value:
+          id: chain_bus
+          pin: 2

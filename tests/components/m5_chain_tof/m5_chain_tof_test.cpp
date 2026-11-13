@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -55,16 +57,22 @@ static std::vector<uint8_t> packet(uint8_t index, uint8_t command, std::initiali
   return {buffer.begin(), buffer.begin() + size};
 }
 
+static void wait_for_next_bus_slot() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(m5_chain_base::INTER_REQUEST_DELAY_MS + 2));
+}
+
 TEST(M5ChainToFTest, PublishesLittleEndianDistance) {
   MockUART uart;
   M5ChainToF tof;
   sensor::Sensor distance;
   tof.set_uart_parent(&uart);
   tof.set_chain_index(7);
+  tof.set_update_interval(0);
   tof.set_distance_sensor(&distance);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   tof.setup();
+  tof.loop();
   uart.inject(packet(7, static_cast<uint8_t>(TofCommand::TOF_COMMAND_GET_DISTANCE), {0x34, 0x12}));
   tof.loop();
 
@@ -78,6 +86,7 @@ TEST(M5ChainToFTest, AcceptsLateDistanceAsUnsolicitedResponse) {
   tof.set_uart_parent(&uart);
   tof.set_chain_index(7);
   tof.set_distance_sensor(&distance);
+  tof.setup();
 
   uart.inject(packet(7, static_cast<uint8_t>(TofCommand::TOF_COMMAND_GET_DISTANCE), {0x78, 0x56}));
   tof.loop();
@@ -93,6 +102,7 @@ TEST(M5ChainToFTest, LateDistanceClearsTimeoutWarning) {
   tof.set_uart_parent(&uart);
   tof.set_chain_index(7);
   tof.set_distance_sensor(&distance);
+  tof.setup();
 
   tof.on_request_timeout(7, static_cast<uint8_t>(TofCommand::TOF_COMMAND_GET_DISTANCE));
   EXPECT_TRUE(tof.status_has_warning());
@@ -118,6 +128,8 @@ TEST(M5ChainToFTest, CombinesRgbComponentsAcrossOutputUpdates) {
   uart.inject(packet(4, static_cast<uint8_t>(m5_chain_base::ChainCommand::CHAIN_COMMAND_SET_RGB_VALUE), {1}));
   tof.loop();
   EXPECT_TRUE(tof.request_pending());
+  wait_for_next_bus_slot();
+  tof.loop();
 }
 
 }  // namespace

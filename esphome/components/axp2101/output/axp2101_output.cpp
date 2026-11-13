@@ -1,120 +1,97 @@
 #include "axp2101_output.h"
 
-namespace esphome {
-namespace axp2101 {
+#include "esphome/core/log.h"
 
-static const char *TAG = "axp2101.output";
+namespace esphome::axp2101 {
 
-void AXP2101OutputBase::apply_channel(PowerChannel channel, uint16_t voltage) {
-  switch (channel) {
-    case PowerChannel::ALDO1:
-      this->parent_->enableALDO1();
-      this->parent_->setALDO1Voltage(voltage);
-      break;
-    case PowerChannel::ALDO2:
-      this->parent_->enableALDO2();
-      this->parent_->setALDO2Voltage(voltage);
-      break;
-    case PowerChannel::ALDO3:
-      this->parent_->enableALDO3();
-      this->parent_->setALDO3Voltage(voltage);
-      break;
-    case PowerChannel::BLDO1:
-      this->parent_->enableBLDO1();
-      this->parent_->setBLDO1Voltage(voltage);
-      break;
-    case PowerChannel::BLDO2:
-      this->parent_->enableBLDO2();
-      this->parent_->setBLDO2Voltage(voltage);
-      break;
-    case PowerChannel::DLDO1:
-      this->parent_->enableDLDO1();
-      this->parent_->setDLDO1Voltage(voltage);
-      break;
-    case PowerChannel::DLDO2:
-      this->parent_->enableDLDO2();
-      this->parent_->setDLDO2Voltage(voltage);
-      break;
-    case PowerChannel::CPUSLDO:
-      this->parent_->enableCPUSLDO();
-      this->parent_->setCPUSLDOVoltage(voltage);
-      break;
-    case PowerChannel::DCDC1:
-      this->parent_->enableDC1();
-      this->parent_->setDC1Voltage(voltage);
-      break;
-    case PowerChannel::DCDC2:
-      this->parent_->enableDC2();
-      this->parent_->setDC2Voltage(voltage);
-      break;
-    case PowerChannel::DCDC3:
-      this->parent_->enableDC3();
-      this->parent_->setDC3Voltage(voltage);
-      break;
-    case PowerChannel::DCDC4:
-      this->parent_->enableDC4();
-      this->parent_->setDC4Voltage(voltage);
-      break;
-    case PowerChannel::DCDC5:
-      this->parent_->enableDC5();
-      this->parent_->setDC5Voltage(voltage);
-      break;
-    case PowerChannel::ALDO4:
-      this->parent_->enableALDO4();
-      this->parent_->setALDO4Voltage(voltage);
-      break;
-    default:
-      ESP_LOGW(TAG, "Unknown channel: %d", channel);
-      break;
+ESPHOME_LOG_TAG(TAG, "axp2101.output");
+
+/// Below this many reachable voltages a dimmer looks like a handful of jumps
+/// rather than a fade, so it is worth pointing out at startup.
+static constexpr uint16_t AXP_OUTPUT_MIN_USEFUL_LEVELS = 4;
+
+void AXP2101FloatOutput::setup() {
+  if (this->rail_name_ == nullptr) {
+    this->mark_failed(LOG_STR("No rail configured"));
+    return;
   }
-}
+  this->rail_ = this->parent_->find_rail(this->rail_name_);
+  if (this->rail_ == nullptr) {
+    ESP_LOGE(TAG, "'%s' is not a power rail of this chip", this->rail_name_);
+    this->mark_failed(LOG_STR("Unknown rail"));
+    return;
+  }
+  if (!axp_base::axp_rail_has_voltage(*this->rail_)) {
+    ESP_LOGE(TAG, "%s has no voltage control", this->rail_->name);
+    this->mark_failed(LOG_STR("Rail has no voltage control"));
+    return;
+  }
+  if (this->min_voltage_ >= this->max_voltage_) {
+    this->mark_failed(LOG_STR("min_voltage must be below max_voltage"));
+    return;
+  }
 
-void AXP2101OutputBase::disable_channel(PowerChannel channel) {
-  switch (channel) {
-    case PowerChannel::ALDO1: this->parent_->disableALDO1(); break;
-    case PowerChannel::ALDO2: this->parent_->disableALDO2(); break;
-    case PowerChannel::ALDO3: this->parent_->disableALDO3(); break;
-    case PowerChannel::BLDO1: this->parent_->disableBLDO1(); break;
-    case PowerChannel::BLDO2: this->parent_->disableBLDO2(); break;
-    case PowerChannel::DLDO1: this->parent_->disableDLDO1(); break;
-    case PowerChannel::DLDO2: this->parent_->disableDLDO2(); break;
-    case PowerChannel::CPUSLDO: this->parent_->disableCPUSLDO(); break;
-    case PowerChannel::DCDC1: this->parent_->disableDC1(); break;
-    case PowerChannel::DCDC2: this->parent_->disableDC2(); break;
-    case PowerChannel::DCDC3: this->parent_->disableDC3(); break;
-    default:
-      ESP_LOGW(TAG, "Unknown channel: %d", channel);
-      break;
+  const uint16_t levels =
+      axp_base::AxpComponent::count_rail_levels(*this->rail_, this->min_voltage_, this->max_voltage_);
+  if (levels < 2) {
+    ESP_LOGE(TAG, "%s cannot produce enough voltages between %u and %u mV", this->rail_->name,
+             static_cast<unsigned>(this->min_voltage_), static_cast<unsigned>(this->max_voltage_));
+    this->mark_failed(LOG_STR("Range holds fewer than two voltages"));
+    return;
+  }
+  if (levels < AXP_OUTPUT_MIN_USEFUL_LEVELS) {
+    ESP_LOGW(TAG, "%s gives only %u levels between %u and %u mV; widen the range or pick a rail with a finer step",
+             this->rail_->name, static_cast<unsigned>(levels), static_cast<unsigned>(this->min_voltage_),
+             static_cast<unsigned>(this->max_voltage_));
+  }
+
+  if (this->dvm_ && !this->parent_->set_rail_dvm(this->rail_, true)) {
+    ESP_LOGW(TAG, "%s has no dynamic voltage management, dvm is ignored", this->rail_->name);
   }
 }
 
 void AXP2101FloatOutput::write_state(float state) {
+  if (this->rail_ == nullptr) {
+    return;
+  }
 
-    // voltage normalization with the given step
-    uint16_t raw_voltage = static_cast<uint16_t>(min_voltage_ + state * (max_voltage_ - min_voltage_));
-    uint16_t aligned_voltage = (raw_voltage / this->step_) * this->step_;
-
-    // voltage boundary value
-    if (aligned_voltage < min_voltage_) aligned_voltage = min_voltage_;
-    if (aligned_voltage > max_voltage_) aligned_voltage = max_voltage_;
-
-    // if state is 0.0f, turn off corresponding power channel
-    if ( state == 0.0f ) {
-        this->disable_channel(this->channel_);
-        return ;
+  if (state <= 0.0f) {
+    // A rail at its lowest set point is still lit, so 0 means off.
+    if (!this->parent_->set_rail_enabled(this->rail_, false)) {
+      ESP_LOGE(TAG, "Could not turn %s off", this->rail_->name);
     }
+    return;
+  }
 
-    this->apply_channel(this->channel_, aligned_voltage);
+  const uint32_t span = static_cast<uint32_t>(this->max_voltage_ - this->min_voltage_);
+  const uint16_t target = static_cast<uint16_t>(this->min_voltage_ + static_cast<uint32_t>(state * span + 0.5f));
+
+  uint16_t applied = 0;
+  if (!this->parent_->set_rail_voltage_nearest(this->rail_, target, &applied)) {
+    ESP_LOGE(TAG, "Could not set %s to %u mV", this->rail_->name, static_cast<unsigned>(target));
+    return;
+  }
+  // The set point goes in before the rail is enabled so it never comes up at
+  // whatever voltage the chip happened to be holding.
+  if (!this->parent_->set_rail_enabled(this->rail_, true)) {
+    ESP_LOGE(TAG, "Could not turn %s on at %u mV", this->rail_->name, static_cast<unsigned>(applied));
+  }
+
+  ESP_LOGV(TAG, "%s: level %.2f -> %u mV (rounded from %u)", this->rail_->name, state, static_cast<unsigned>(applied),
+           static_cast<unsigned>(target));
 }
 
-
-void AXP2101BinaryOutput::write_state(bool state) {
-    if ( state ) {
-        this->apply_channel(this->channel_, this->voltage_);
-    } else {
-        this->disable_channel(this->channel_);
-    }
+void AXP2101FloatOutput::dump_config() {
+  LOG_FLOAT_OUTPUT(this);
+  if (this->rail_ == nullptr) {
+    return;
+  }
+  ESP_LOGCONFIG(TAG, "  Rail: %s (%u mA max)", this->rail_->name, static_cast<unsigned>(this->rail_->max_ma));
+  ESP_LOGCONFIG(TAG, "  Range: %u..%u mV, %u levels", static_cast<unsigned>(this->min_voltage_),
+                static_cast<unsigned>(this->max_voltage_),
+                static_cast<unsigned>(
+                    axp_base::AxpComponent::count_rail_levels(*this->rail_, this->min_voltage_, this->max_voltage_)));
+  ESP_LOGCONFIG(TAG, "  DVM: %s", this->dvm_ ? LOG_STR_LITERAL("enabled") : LOG_STR_LITERAL("disabled"));
 }
 
-} // axp2101
-} // esphome
+}  // namespace esphome::axp2101

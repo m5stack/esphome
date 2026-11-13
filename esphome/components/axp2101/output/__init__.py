@@ -1,82 +1,85 @@
 import esphome.codegen as cg
-import esphome.config_validation as cv
 from esphome.components import output
+from esphome.components.axp_base import CONF_AXP_ID, AxpComponent
+from esphome.components.axp_base.rails import CONF_RAIL, rail_schema
+import esphome.config_validation as cv
 from esphome.const import (
-    CONF_ID, 
-    CONF_VOLTAGE,
-    CONF_SWITCH,
-    CONF_CHANNEL,
-    CONF_STEP,
-    CONF_RANGE,
-    CONF_TYPE
+    CONF_ID,
+    CONF_INVERTED,
+    CONF_MAX_POWER,
+    CONF_MAX_VOLTAGE,
+    CONF_MIN_POWER,
+    CONF_POWER_SUPPLY,
 )
 
-from .. import axp2101_ns, BASE_SCHEMA, CONF_AXP2101_ID
+from .. import RAIL_CHANNELS, axp2101_ns
 
 DEPENDENCIES = ["axp2101"]
 
+CONF_DVM = "dvm"
 CONF_MIN_VOLTAGE = "min_voltage"
-CONF_MAX_VOLTAGE = "max_voltage"
 
-AXP2101FloatOutput = axp2101_ns.class_("AXP2101FloatOutput", output.FloatOutput)
-AXP2101BinaryOutput = axp2101_ns.class_("AXP2101BinaryOutput", output.BinaryOutput, cg.Component)
-PowerChannel = axp2101_ns.enum("PowerChannel", is_class=True)
-
-POWER_CHANNELS = {
-    "DCDC1": PowerChannel.DCDC1,
-    "DCDC2": PowerChannel.DCDC2,
-    "DCDC3": PowerChannel.DCDC3,
-    "DCDC4": PowerChannel.DCDC4,
-    "DCDC5": PowerChannel.DCDC5,
-    "ALDO1": PowerChannel.ALDO1,
-    "ALDO2": PowerChannel.ALDO2,
-    "ALDO3": PowerChannel.ALDO3,
-    "ALDO4": PowerChannel.ALDO4,
-    "BLDO1": PowerChannel.BLDO1,
-    "BLDO2": PowerChannel.BLDO2,
-    "DLDO1": PowerChannel.DLDO1,
-    "DLDO2": PowerChannel.DLDO2,
-    "CPUSLDO": PowerChannel.CPUSLDO,
-}
-
-CONFIG_SCHEMA = cv.typed_schema(
-    {
-        # Use type: range to cooperate with FloatOutput component.
-        # This can be used to tweak the output voltage range
-        CONF_RANGE: output.FLOAT_OUTPUT_SCHEMA.extend(BASE_SCHEMA).extend(
-            {
-                cv.GenerateID(CONF_ID): cv.declare_id(AXP2101FloatOutput),
-                cv.Required(CONF_CHANNEL): cv.enum(POWER_CHANNELS, upper=True, space="_"),
-                cv.Optional(CONF_STEP, default=100): cv.uint16_t, 
-                cv.Optional(CONF_MIN_VOLTAGE, default=1000): cv.uint16_t,
-                cv.Optional(CONF_MAX_VOLTAGE, default=3300): cv.uint16_t,
-            }
-        ),
-
-        CONF_SWITCH: output.BINARY_OUTPUT_SCHEMA.extend(BASE_SCHEMA).extend(
-            {
-                cv.GenerateID(CONF_ID): cv.declare_id(AXP2101BinaryOutput),
-                cv.Required(CONF_CHANNEL): cv.enum(POWER_CHANNELS, upper=True, space="_"),
-                cv.Optional(CONF_VOLTAGE, default=1800): cv.uint16_t,
-            }
-        )
-    },
-    key=CONF_TYPE,
-    lower=True,
-    default_type="switch",
+AXP2101FloatOutput = axp2101_ns.class_(
+    "AXP2101FloatOutput", output.FloatOutput, cg.Component
 )
 
-async def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
-    await cg.register_parented(var, config[CONF_AXP2101_ID])
-    await output.register_output(var, config)
+# The rail's own voltage window already sets both ends of the range, so the
+# generic power scaling would be a second, conflicting scaling on top of it.
+SCALING_KEYS = (CONF_MIN_POWER, CONF_MAX_POWER, output.CONF_ZERO_MEANS_ZERO)
+# Inversion is meaningless for a voltage: it would map full level onto the
+# lowest voltage. A power supply cannot switch a PMIC rail either.
+OTHER_KEYS = (CONF_INVERTED, CONF_POWER_SUPPLY)
 
-    if config[CONF_TYPE] == CONF_RANGE:
-        cg.add(var.set_channel(config[CONF_CHANNEL]))
-        cg.add(var.set_min_voltage(config[CONF_MIN_VOLTAGE]))
-        cg.add(var.set_max_voltage(config[CONF_MAX_VOLTAGE]))
-    else:
-        await cg.register_component(var, config)
-        cg.add(var.set_channel(config[CONF_CHANNEL]))
-        cg.add(var.set_voltage(config[CONF_VOLTAGE]))
-    
+
+def _reject_unsupported_keys(config):
+    for key in SCALING_KEYS:
+        if key in config:
+            raise cv.Invalid(
+                f"'{key}' is not supported by the AXP2101 output; use "
+                f"'{CONF_MIN_VOLTAGE}' and '{CONF_MAX_VOLTAGE}' to set the range"
+            )
+    for key in OTHER_KEYS:
+        if key in config:
+            raise cv.Invalid(f"'{key}' is not supported by the AXP2101 output")
+    return config
+
+
+def _validate_range(config):
+    if config[CONF_MIN_VOLTAGE] >= config[CONF_MAX_VOLTAGE]:
+        raise cv.Invalid(f"'{CONF_MIN_VOLTAGE}' must be below '{CONF_MAX_VOLTAGE}'")
+    return config
+
+
+# These are the widest windows any AXP2101 rail offers. The per-rail window is
+# checked on the device, where the model table has the exact figures.
+VOLTAGE_RANGE = cv.int_range(min=500, max=3700)
+
+CONFIG_SCHEMA = cv.All(
+    # The rejection has to run before the schema below, because that one adds a
+    # default for zero_means_zero and would trip on its own default.
+    _reject_unsupported_keys,
+    output.FLOAT_OUTPUT_SCHEMA.extend(rail_schema(RAIL_CHANNELS)).extend(
+        {
+            cv.GenerateID(): cv.declare_id(AXP2101FloatOutput),
+            cv.GenerateID(CONF_AXP_ID): cv.use_id(AxpComponent),
+            cv.Optional(CONF_MIN_VOLTAGE, default=1800): VOLTAGE_RANGE,
+            cv.Optional(CONF_MAX_VOLTAGE, default=3300): VOLTAGE_RANGE,
+            cv.Optional(CONF_DVM, default=False): cv.boolean,
+        }
+    ),
+    _validate_range,
+)
+
+
+async def to_code(config):
+    parent = await cg.get_variable(config[CONF_AXP_ID])
+
+    var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_component(var, config)
+    await output.register_output(var, config)
+    await cg.register_parented(var, parent)
+
+    cg.add(var.set_rail_name(config[CONF_RAIL]))
+    cg.add(var.set_min_voltage(config[CONF_MIN_VOLTAGE]))
+    cg.add(var.set_max_voltage(config[CONF_MAX_VOLTAGE]))
+    cg.add(var.set_dvm(config[CONF_DVM]))

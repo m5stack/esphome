@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -66,16 +68,22 @@ static std::vector<uint8_t> packet(uint8_t index, uint8_t command, std::initiali
   return {buffer.begin(), buffer.begin() + size};
 }
 
+static void wait_for_next_bus_slot() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(m5_chain_base::INTER_REQUEST_DELAY_MS + 2));
+}
+
 TEST(M5ChainSwitchTest, PublishesEventTriggerStateFromProtocol) {
   MockUART uart;
   M5ChainSwitch chain_switch;
   TestSwitch event_trigger;
   chain_switch.set_uart_parent(&uart);
   chain_switch.set_chain_index(7);
+  chain_switch.set_update_interval(0);
   chain_switch.set_event_trigger_switch(&event_trigger);
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(1);
   chain_switch.setup();
+  chain_switch.loop();
   uart.inject(packet(7, static_cast<uint8_t>(SwitchCommand::SWITCH_COMMAND_GET_EVENT_TRIGGER), {1}));
   chain_switch.loop();
 
@@ -112,6 +120,7 @@ TEST(M5ChainSwitchTest, PublishesAdcModeThresholdAndStatusSensors) {
   binary_sensor::BinarySensor status;
   chain_switch.set_uart_parent(&uart);
   chain_switch.set_chain_index(6);
+  chain_switch.set_update_interval(0);
   chain_switch.set_switch_sensor(SwitchSensorType::SWITCH_SENSOR_ADC_8, &adc);
   chain_switch.set_switch_sensor(SwitchSensorType::SWITCH_SENSOR_CHANGE_MODE, &change_mode);
   chain_switch.set_switch_sensor(SwitchSensorType::SWITCH_SENSOR_OPEN_THRESHOLD, &open_threshold);
@@ -120,23 +129,32 @@ TEST(M5ChainSwitchTest, PublishesAdcModeThresholdAndStatusSensors) {
 
   EXPECT_CALL(uart, write_array(::testing::_, 9)).Times(5);
   chain_switch.setup();
+  chain_switch.loop();
 
   uart.inject(packet(6, static_cast<uint8_t>(SwitchCommand::SWITCH_COMMAND_GET_ADC_8), {200}));
   chain_switch.loop();
   EXPECT_FLOAT_EQ(adc.state, 200);
 
+  wait_for_next_bus_slot();
+  chain_switch.loop();
   uart.inject(packet(6, static_cast<uint8_t>(SwitchCommand::SWITCH_COMMAND_GET_CHANGE_MODE), {1}));
   chain_switch.loop();
   EXPECT_FLOAT_EQ(change_mode.state, 1);
 
+  wait_for_next_bus_slot();
+  chain_switch.loop();
   uart.inject(packet(6, static_cast<uint8_t>(SwitchCommand::SWITCH_COMMAND_GET_THRESHOLD), {0x7F, 0x0F, 0x80, 0x00}));
   chain_switch.loop();
   EXPECT_FLOAT_EQ(open_threshold.state, 3967);
   EXPECT_FLOAT_EQ(close_threshold.state, 128);
 
+  wait_for_next_bus_slot();
+  chain_switch.loop();
   uart.inject(packet(6, static_cast<uint8_t>(SwitchCommand::SWITCH_COMMAND_GET_STATUS), {1}));
   chain_switch.loop();
   EXPECT_TRUE(status.get_state());
+  wait_for_next_bus_slot();
+  chain_switch.loop();
 }
 
 TEST(M5ChainSwitchTest, PublishesUnsolicitedStateChangeReport) {
@@ -146,6 +164,7 @@ TEST(M5ChainSwitchTest, PublishesUnsolicitedStateChangeReport) {
   chain_switch.set_uart_parent(&uart);
   chain_switch.set_chain_index(3);
   chain_switch.set_status_sensor(&status);
+  chain_switch.setup();
 
   uart.inject(packet(3, 0xE0, {1, 0x04}));
   chain_switch.loop();
@@ -168,6 +187,8 @@ TEST(M5ChainSwitchTest, CombinesRgbComponentsAcrossOutputUpdates) {
   uart.inject(packet(4, static_cast<uint8_t>(m5_chain_base::ChainCommand::CHAIN_COMMAND_SET_RGB_VALUE), {1}));
   chain_switch.loop();
   EXPECT_TRUE(chain_switch.request_pending());
+  wait_for_next_bus_slot();
+  chain_switch.loop();
 }
 
 }  // namespace

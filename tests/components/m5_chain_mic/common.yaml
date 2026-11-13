@@ -13,6 +13,10 @@ sensor:
     m5_chain_mic_id: chain_mic
     name: Chain MIC ADC 8 bit
     type: adc_8
+  - platform: m5_chain_mic
+    m5_chain_mic_id: chain_mic
+    name: Chain MIC Trigger Threshold
+    type: threshold
 
 binary_sensor:
   - platform: m5_chain_mic
@@ -47,10 +51,6 @@ light:
 interval:
   - interval: 60s
     then:
-      - m5_chain_mic.set_threshold:
-          id: chain_mic
-          threshold: 900
-          save_to_flash: false
       - m5_chain_mic.set_report_mode:
           id: chain_mic
           report_mode: true

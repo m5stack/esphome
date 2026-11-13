@@ -15,6 +15,7 @@ MicSensorType = m5_chain_mic_ns.enum("MicSensorType", is_class=True)
 SENSOR_TYPES = {
     "adc_12": MicSensorType.MIC_SENSOR_ADC_12,
     "adc_8": MicSensorType.MIC_SENSOR_ADC_8,
+    "threshold": MicSensorType.MIC_SENSOR_THRESHOLD,
 }
 
 CONFIG_SCHEMA = sensor.sensor_schema(
@@ -33,4 +34,4 @@ async def to_code(config: ConfigType) -> None:
     var = await sensor.new_sensor(config)
     hub = await cg.get_variable(config[CONF_M5_CHAIN_MIC_ID])
     await cg.register_parented(var, hub)
-    cg.add(hub.set_adc_sensor(SENSOR_TYPES[config[CONF_TYPE]], var))
+    cg.add(hub.set_mic_sensor(SENSOR_TYPES[config[CONF_TYPE]], var))
