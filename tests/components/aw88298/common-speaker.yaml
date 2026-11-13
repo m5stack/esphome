@@ -1,0 +1,9 @@
+speaker:
+  - platform: i2s_audio
+    id: aw88298_speaker
+    i2s_audio_id: i2s_audio_bus
+    audio_dac: aw88298_amp
+    dac_type: external
+    i2s_dout_pin: GPIO13
+    sample_rate: 16000
+    bits_per_sample: 16bit

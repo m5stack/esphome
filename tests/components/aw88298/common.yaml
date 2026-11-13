@@ -1,0 +1,109 @@
+# The reset line of the second amplifier sits on an IO expander.
+aw9523b:
+  - id: reset_expander
+    i2c_id: i2c_bus
+    address: 0x58
+
+audio_dac:
+  - platform: aw88298
+    id: aw88298_amp
+    i2c_id: i2c_bus
+    address: 0x36
+    i2s_channel: mono
+    reset_pin: GPIO14
+    hdcc: true
+    agc:
+      attack_threshold: 64%
+      release_threshold: 57%
+      attack_time: 1ms
+      release_time: 10ms
+      hold_time: 133ms
+      rms: false
+    boost:
+      mode: smart_boost_2
+      voltage: 9.5V
+      current_limit: 3.5A
+      deglitch: 21.3ms
+      attack_threshold: 30%
+      release_threshold: 15%
+    volume_min_db: -96dB
+    volume_max_db: 0dB
+    initial_volume: 80%
+    update_interval: 10s
+  # No agc block, and every I2S setting given explicitly.
+  - platform: aw88298
+    id: aw88298_amp_2
+    i2c_id: i2c_bus
+    address: 0x37
+    sample_rate: 48000
+    bits_per_sample: 24bit
+    slot_bits: 24
+    i2s_format: left_justified
+    ws_pulse: bck
+    reset_pin:
+      aw9523b_id: reset_expander
+      number: 3
+    boost:
+      mode: force_boost
+      voltage: 10.25V
+      current_limit: 4.25A
+
+sensor:
+  - platform: aw88298
+    aw88298_id: aw88298_amp
+    die_temperature:
+      name: Die Temperature
+    supply_voltage:
+      name: Supply Voltage
+    amplifier_voltage:
+      name: Amplifier Voltage
+    boost_voltage:
+      name: Boost Voltage Reading
+
+binary_sensor:
+  - platform: aw88298
+    aw88298_id: aw88298_amp
+    fault:
+      name: Fault
+    over_temperature:
+      name: Over Temperature
+    over_current:
+      name: Over Current
+    boost_started:
+      name: Boost Started
+    clock_stable:
+      name: Clock Stable
+    clipping:
+      name: Clipping
+
+switch:
+  - platform: aw88298
+    aw88298_id: aw88298_amp
+    hdcc:
+      name: HDCC
+    agc:
+      name: AGC
+    input_attenuation:
+      name: Input Attenuation
+    receiver_mode:
+      name: Receiver Mode
+
+number:
+  - platform: aw88298
+    aw88298_id: aw88298_amp
+    boost_voltage:
+      name: Boost Voltage Setting
+    boost_current_limit:
+      name: Boost Current Limit
+    agc_attack_threshold:
+      name: AGC Attack Threshold
+    agc_hold_time:
+      name: AGC Hold Time
+
+select:
+  - platform: aw88298
+    aw88298_id: aw88298_amp
+    boost_mode:
+      name: Boost Mode
+    boost_deglitch:
+      name: Boost Deglitch

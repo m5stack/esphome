@@ -1,0 +1,20 @@
+packages:
+  i2c: !include ../../test_build_components/common/i2c/esp32-idf.yaml
+
+audio_dac:
+  # Nothing plays through this one, so the sample rate falls back to its default and a warning
+  # is logged. No agc block either, which leaves the datasheet defaults in those registers.
+  - platform: aw88298
+    id: aw88298_standalone
+    i2c_id: i2c_bus
+  # Four slot TDM. ESPHome's I2S peripheral cannot produce this frame, so it is only checked here
+  # and not compiled.
+  - platform: aw88298
+    id: aw88298_tdm
+    i2c_id: i2c_bus
+    sample_rate: 96000
+    bits_per_sample: 16bit
+    slot_count: 4
+    rx_slots: [1, 3]
+    i2s_channel: right
+    input_attenuation: true
