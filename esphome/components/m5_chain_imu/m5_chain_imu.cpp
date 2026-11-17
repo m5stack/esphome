@@ -20,6 +20,9 @@ static constexpr uint8_t IMU_EVENT_REPORT_TYPE = 0x10;
 static constexpr uint16_t AXES_DATA_SIZE = 6;
 static constexpr uint16_t TEMPERATURE_DATA_SIZE = 2;
 
+/// True while a configured alarm still waits for the reading that gives it its first state.
+static bool awaits_initial_state(binary_sensor::BinarySensor *alarm) { return alarm != nullptr && !alarm->has_state(); }
+
 /// Give an alarm its first state from a reading; once it has one, only the device's reports change it.
 static void publish_initial_alarm(binary_sensor::BinarySensor *alarm, bool active) {
   if (alarm != nullptr && !alarm->has_state())
@@ -135,13 +138,15 @@ ChainStatus M5ChainImu::set_led_brightness(uint8_t brightness) {
 }
 
 void M5ChainImu::poll_next_() {
+  // An alarm with no sensor of its own still needs one reading for its first state.
   if (this->acceleration_x_sensor_ != nullptr || this->acceleration_y_sensor_ != nullptr ||
-      this->acceleration_z_sensor_ != nullptr)
+      this->acceleration_z_sensor_ != nullptr || awaits_initial_state(this->motion_binary_sensor_) ||
+      awaits_initial_state(this->rotation_binary_sensor_))
     this->queue_job_(ImuJob::IMU_JOB_READ_ACCEL);
   if (this->gyroscope_x_sensor_ != nullptr || this->gyroscope_y_sensor_ != nullptr ||
       this->gyroscope_z_sensor_ != nullptr)
     this->queue_job_(ImuJob::IMU_JOB_READ_GYRO);
-  if (this->temperature_sensor_ != nullptr)
+  if (this->temperature_sensor_ != nullptr || awaits_initial_state(this->temperature_alarm_binary_sensor_))
     this->queue_job_(ImuJob::IMU_JOB_READ_TEMPERATURE);
   this->send_next_job_();
 }

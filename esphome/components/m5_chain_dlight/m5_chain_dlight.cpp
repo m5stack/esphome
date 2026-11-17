@@ -20,6 +20,9 @@ static constexpr uint8_t cmd(ChainCommand command) { return static_cast<uint8_t>
 static constexpr uint8_t OPERATION_SUCCESS = 1;
 static constexpr uint16_t LUX_DATA_SIZE = 4;
 
+/// True while a configured alarm still waits for the reading that gives it its first state.
+static bool awaits_initial_state(binary_sensor::BinarySensor *alarm) { return alarm != nullptr && !alarm->has_state(); }
+
 /// Give an alarm its first state from a reading; once it has one, only the device's reports change it.
 static void publish_initial_alarm(binary_sensor::BinarySensor *alarm, bool active) {
   if (alarm != nullptr && !alarm->has_state())
@@ -106,7 +109,9 @@ ChainStatus M5ChainDLight::set_led_brightness(uint8_t brightness) {
 }
 
 void M5ChainDLight::poll_next_() {
-  if (this->illuminance_sensor_ != nullptr)
+  // An alarm with no illuminance sensor still needs one reading for its first state.
+  if (this->illuminance_sensor_ != nullptr || awaits_initial_state(this->low_light_binary_sensor_) ||
+      awaits_initial_state(this->high_light_binary_sensor_))
     this->queue_job_(DLightJob::DLIGHT_JOB_READ_LUX);
   this->send_next_job_();
 }

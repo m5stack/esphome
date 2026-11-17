@@ -28,6 +28,9 @@ static constexpr uint16_t SPA06_SHORT_DATA_SIZE = 6;
 static constexpr uint16_t SPA06_DATA_SIZE = 8;
 static constexpr uint8_t OPERATION_SUCCESS = 1;
 
+/// True while a configured alarm still waits for the reading that gives it its first state.
+static bool awaits_initial_state(binary_sensor::BinarySensor *alarm) { return alarm != nullptr && !alarm->has_state(); }
+
 /// Give an alarm its first state from a reading; once it has one, only the device's reports change it.
 static void publish_initial_alarm(binary_sensor::BinarySensor *alarm, bool active) {
   if (alarm != nullptr && !alarm->has_state())
@@ -145,10 +148,16 @@ ChainStatus M5ChainEnv::set_led_brightness(uint8_t brightness) {
 }
 
 void M5ChainEnv::poll_next_() {
-  if (this->temperature_sensor_ != nullptr || this->humidity_sensor_ != nullptr)
+  // An alarm with no sensor of its own still needs one reading for its first state.
+  const bool temperature_alarm_waits = awaits_initial_state(this->temperature_alarm_binary_sensor_);
+  if (this->temperature_sensor_ != nullptr || this->humidity_sensor_ != nullptr ||
+      awaits_initial_state(this->humidity_alarm_binary_sensor_) ||
+      (temperature_alarm_waits && !this->temperature_from_spa06_))
     this->queue_job_(EnvJob::ENV_JOB_READ_AHT20);
   if (this->pressure_sensor_ != nullptr || this->altitude_sensor_ != nullptr ||
-      this->barometer_temperature_sensor_ != nullptr)
+      this->barometer_temperature_sensor_ != nullptr || awaits_initial_state(this->pressure_alarm_binary_sensor_) ||
+      awaits_initial_state(this->altitude_alarm_binary_sensor_) ||
+      (temperature_alarm_waits && this->temperature_from_spa06_))
     this->queue_job_(EnvJob::ENV_JOB_READ_SPA06);
   this->send_next_job_();
 }

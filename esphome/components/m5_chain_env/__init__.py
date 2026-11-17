@@ -45,6 +45,5 @@ async def to_code(config: ConfigType) -> None:
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
     cg.add(var.set_chain_index(config[m5_chain_base.CONF_CHAIN_INDEX]))
-    cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))
     if (pressure := config.get(CONF_SEA_LEVEL_PRESSURE)) is not None:
         cg.add(var.set_sea_level_pressure(round(pressure * 10)))

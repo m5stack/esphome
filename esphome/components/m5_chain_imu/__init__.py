@@ -75,7 +75,6 @@ async def to_code(config: ConfigType) -> None:
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
     cg.add(var.set_chain_index(config[m5_chain_base.CONF_CHAIN_INDEX]))
-    cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))
     cg.add_optional(var.set_accel_range, config.get(CONF_ACCELEROMETER_RANGE))
     cg.add_optional(var.set_gyro_range, config.get(CONF_GYROSCOPE_RANGE))
     cg.add_optional(var.set_accel_odr, config.get(CONF_ACCELEROMETER_ODR))
