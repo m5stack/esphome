@@ -1,8 +1,9 @@
 #pragma once
 
 #include "esphome/components/output/float_output.h"
-#include "../aw9523b.h"
 #include "esphome/core/gpio.h"
+
+#include "../aw9523b.h"
 
 namespace esphome::aw9523b {
 
@@ -10,11 +11,13 @@ class AW9523BFloatOutput : public output::FloatOutput, public Component, public 
  public:
   void setup() override;
   void dump_config() override;
-  void set_pin(AW9523BGPIOPin *pin) { this->pin_ = pin; }
+  void set_pin(uint8_t pin) { this->pin_ = pin; }
 
  protected:
   void write_state(float state) override;
-  AW9523BGPIOPin *pin_{nullptr};
+
+  /// Pin number from the configuration
+  uint8_t pin_{0};
 };
 
 }  // namespace esphome::aw9523b

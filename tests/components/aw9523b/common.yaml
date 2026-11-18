@@ -1,25 +1,37 @@
 aw9523b:
-  - id: aw9523b_with_interrupt
+  - id: aw9523b_hub
+    i2c_id: i2c_bus
+    p0_drive_mode: PUSH_PULL
+    led_max_current: 27.75mA
+  - id: aw9523b_hub_int
+    i2c_id: i2c_bus
     interrupt_pin: ${interrupt_pin}
-  - id: aw9523b_polling
 
 binary_sensor:
   - platform: gpio
-    name: AW9523B Interrupt Input
+    id: aw9523b_input_p0
+    name: AW9523B input P0
     pin:
-      aw9523b_id: aw9523b_with_interrupt
-      number: 0
-      mode: INPUT
+      aw9523b_id: aw9523b_hub
+      number: 3
   - platform: gpio
-    name: AW9523B Polled Input On Interrupt Device
+    id: aw9523b_input_p1
+    name: AW9523B input P1
     pin:
-      aw9523b_id: aw9523b_with_interrupt
-      number: 1
-      mode: INPUT
-      use_interrupt: false
+      aw9523b_id: aw9523b_hub_int
+      number: 11
+
+switch:
   - platform: gpio
-    name: AW9523B Input Without Interrupt Pin
+    id: aw9523b_output_pin
+    name: AW9523B output pin
     pin:
-      aw9523b_id: aw9523b_polling
-      number: 0
-      mode: INPUT
+      aw9523b_id: aw9523b_hub
+      number: 4
+      mode: OUTPUT
+
+output:
+  - platform: aw9523b
+    id: aw9523b_led
+    aw9523b_id: aw9523b_hub
+    pin: 0
