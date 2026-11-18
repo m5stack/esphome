@@ -1,0 +1,5 @@
+substitutions:
+  regulator_pin: GPIO18
+
+packages:
+  regulator: !include common.yaml

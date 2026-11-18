@@ -1,52 +1,49 @@
-//#include "esphome/core/log.h"
 #include "axp192_switch.h"
 
-namespace esphome {
-namespace axp192 {
+#include "esphome/core/log.h"
 
-static const char *TAG = "axp192.switch";
+namespace esphome::axp192 {
+
+ESPHOME_LOG_TAG(TAG, "axp192.switch");
 
 void AXP192Switch::setup() {
-    bool initial_state = this->get_initial_state_with_restore_mode().value_or(false);
-    if (initial_state) {
-        this->turn_on();
-    } else {
-        this->turn_off();
-    }
-    ESP_LOGCONFIG(TAG, "AXP192 switch setup %X", initial_state);
+  if (this->rail_name_ == nullptr) {
+    this->mark_failed(LOG_STR("No rail configured"));
+    return;
+  }
+  this->rail_ = this->parent_->find_rail(this->rail_name_);
+  if (this->rail_ == nullptr) {
+    ESP_LOGE(TAG, "'%s' is not a power rail of this chip", this->rail_name_);
+    this->mark_failed(LOG_STR("Unknown rail"));
+    return;
+  }
+  if (!axp_base::axp_rail_has_enable(*this->rail_)) {
+    ESP_LOGE(TAG, "%s cannot be switched", this->rail_->name);
+    this->mark_failed(LOG_STR("Rail cannot be switched"));
+    return;
+  }
+
+  this->control(this->get_initial_state_with_restore_mode().value_or(false));
 }
+
 void AXP192Switch::write_state(bool state) {
-    //GPIO1 is connected to Green Sys LED
-    this->parent_->setGpioPin(1, state);
-    this->publish_state(state); //Critial line to publish state back to HA so switch stays in state (unless set as optimistic)
-    ESP_LOGCONFIG(TAG, "AXP192 switch write state %X", state);
-}
-void AXP192Switch::dump_config(){
-    ESP_LOGCONFIG(TAG, "AXP192 switch");
-}
-
-void VibrationSwitch::setup() {
-    bool initial_state = this->get_initial_state_with_restore_mode().value_or(false);
-    if (initial_state) {
-        this->turn_on();
-    } else {
-        this->turn_off();
-    }
-    ESP_LOGCONFIG(TAG, "Vibration switch setup %X", initial_state);
-}
-void VibrationSwitch::write_state(bool state) {
-    //GPIO1 is connected to Green Sys LED
-    if (state) {
-        this->parent_->enableDLDO3();
-    } else {
-        this->parent_->disableDLDO3();
-    }
-    this->publish_state(state); //Critial line to publish state back to HA so switch stays in state (unless set as optimistic)
-    ESP_LOGCONFIG(TAG, "Vibration switch write state %X", state);
-}
-void VibrationSwitch::dump_config(){
-    ESP_LOGCONFIG(TAG, "Vibration switch");
+  if (this->rail_ == nullptr) {
+    return;
+  }
+  if (!this->parent_->set_rail_enabled(this->rail_, state)) {
+    // The bus is gone, so the rail's real state is unknown. Publishing a guess
+    // would be worse than leaving the last known state in place.
+    ESP_LOGE(TAG, "Could not %s %s", state ? LOG_STR_LITERAL("enable") : LOG_STR_LITERAL("disable"), this->rail_->name);
+    return;
+  }
+  this->publish_state(state);
 }
 
-} //namespace axp192_switch
-} //namespace esphome
+void AXP192Switch::dump_config() {
+  LOG_SWITCH("  ", "AXP192 Switch", this);
+  if (this->rail_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Rail: %s (%u mA max)", this->rail_->name, static_cast<unsigned>(this->rail_->max_ma));
+  }
+}
+
+}  // namespace esphome::axp192

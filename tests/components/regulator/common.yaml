@@ -1,0 +1,7 @@
+regulator:
+  - platform: gpio
+    pin: ${regulator_pin}
+    id: load_switch
+    boot_on: true
+    always_on: true
+    startup_delay: 10ms

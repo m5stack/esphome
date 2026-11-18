@@ -16,6 +16,8 @@ DEPENDENCIES = ["axp2101"]
 
 CONF_CHARGING = "charging"
 CONF_GAUGE = "gauge"
+CONF_DCDC_UVP_SHUTDOWN = "dcdc_uvp_shutdown"
+CONF_TS_EXTERNAL_INPUT = "ts_external_input"
 
 AXP2101Switch = axp2101_ns.class_("AXP2101Switch", switch.Switch, cg.Component)
 AXP2101FlagSwitch = axp2101_ns.class_("AXP2101FlagSwitch", switch.Switch, cg.Component)
@@ -28,6 +30,14 @@ FLAGS = {
         "entity_category": ENTITY_CATEGORY_CONFIG,
     },
     CONF_GAUGE: {"icon": "mdi:battery-sync", "entity_category": ENTITY_CATEGORY_CONFIG},
+    CONF_DCDC_UVP_SHUTDOWN: {
+        "icon": "mdi:shield-alert-outline",
+        "entity_category": ENTITY_CATEGORY_CONFIG,
+    },
+    CONF_TS_EXTERNAL_INPUT: {
+        "icon": "mdi:thermometer-off",
+        "entity_category": ENTITY_CATEGORY_CONFIG,
+    },
 }
 
 _AXP_ID = {cv.GenerateID(CONF_AXP_ID): cv.use_id(AxpComponent)}

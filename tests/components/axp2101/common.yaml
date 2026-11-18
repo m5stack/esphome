@@ -79,6 +79,7 @@ select:
       name: Charge Current
     charge_voltage:
       name: Charge Voltage
+      initial_option: 4.2V
     input_current_limit:
       name: USB Current Limit
     power_key_long_press:
@@ -97,3 +98,17 @@ number:
       name: Precharge Current
     termination_current:
       name: Termination Current
+
+regulator:
+  - platform: axp2101
+    axp_id: pmu
+    voltage: 3300mV
+    rails:
+      - id: rail_aldo1
+        rail: ALDO1
+        boot_on: true
+      - id: rail_aldo2
+        rail: ALDO2
+        voltage: 1800mV
+        always_on: true
+        startup_delay: 10ms

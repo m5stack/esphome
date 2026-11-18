@@ -1,0 +1,123 @@
+axp192:
+  id: pmu
+  i2c_id: i2c_bus
+
+sensor:
+  - platform: axp192
+    axp_id: pmu
+    battery_voltage:
+      name: Battery Voltage
+    battery_charge_current:
+      name: Battery Charge Current
+    battery_power:
+      name: Battery Power
+    vbus_voltage:
+      name: VBUS Voltage
+    die_temperature:
+      name: PMIC Temperature
+
+binary_sensor:
+  - platform: axp192
+    axp_id: pmu
+    battery_charging:
+      name: Charging
+    vbus_present:
+      name: VBUS Present
+  - platform: gpio
+    name: PMU GPIO4
+    pin:
+      axp192: pmu
+      number: 4
+      mode: input
+
+switch:
+  - platform: axp192
+    axp_id: pmu
+    rail: LDO2
+    name: Peripherals
+  - platform: axp192
+    axp_id: pmu
+    rail: DCDC1
+    name: MCU Power
+    restore_mode: ALWAYS_ON
+  - platform: axp192
+    axp_id: pmu
+    charging:
+      name: Charging
+    gauge:
+      name: Coulomb Counter
+      restore_mode: RESTORE_DEFAULT_ON
+  - platform: gpio
+    name: PMU GPIO3
+    pin:
+      axp192: pmu
+      number: 3
+      mode: output
+
+output:
+  - platform: axp192
+    axp_id: pmu
+    rail: DCDC3
+    id: backlight_voltage
+    min_voltage: 2100
+    max_voltage: 3300
+
+light:
+  - platform: monochromatic
+    name: Display
+    output: backlight_voltage
+    gamma_correct: 1.0
+    default_transition_length: 0s
+
+event:
+  - platform: axp192
+    axp_id: pmu
+    name: PMU Event
+  - platform: axp192
+    axp_id: pmu
+    id: power_key_events
+    events: [power_key_short_press, power_key_long_press]
+    device_class: button
+
+button:
+  - platform: axp192
+    axp_id: pmu
+    shutdown:
+      name: Power Off
+    reset_gauge:
+      name: Reset Coulomb Counter
+
+select:
+  - platform: axp192
+    axp_id: pmu
+    charge_current:
+      name: Charge Current
+    charge_voltage:
+      name: Charge Voltage
+      initial_option: 4.2V
+    vbus_current_limit:
+      name: VBUS Current Limit
+    power_key_long_press:
+      name: Power Key Hold Time
+
+number:
+  - platform: axp192
+    axp_id: pmu
+    voff_voltage:
+      name: Shutdown Voltage
+    timer_minutes:
+      name: PMIC Timer
+
+regulator:
+  - platform: axp192
+    axp_id: pmu
+    voltage: 3300mV
+    rails:
+      - id: rail_ldo3
+        rail: LDO3
+        boot_on: true
+      - id: rail_dcdc2
+        rail: DCDC2
+        voltage: 1350mV
+        always_on: true
+        startup_delay: 10ms

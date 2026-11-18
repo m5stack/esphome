@@ -67,6 +67,10 @@ struct AxpRail {
   uint8_t enable_reg;
   uint8_t enable_mask;
   uint8_t enable_value;
+  /// Value written to disable the rail. Zero for an ordinary enable bit, which
+  /// clears it; the AXP192's LDOIO0 is switched by a pin function field instead,
+  /// where "off" means "float" rather than "code 0".
+  uint8_t disable_value;
   /// Register and bit field that select the output voltage. `vsel_reg` is
   /// AXP_REG_NONE when the output voltage is fixed.
   uint8_t vsel_reg;
@@ -78,7 +82,8 @@ struct AxpRail {
 ///
 /// The raw value is assembled from up to three registers. With `mid_reg` set the
 /// channel is a plain 24 bit big endian value (AXP192 battery power); otherwise
-/// the value is `hi_bits` from `hi_reg` followed by `lo_bits` from `lo_reg`.
+/// the value is `hi_bits` from `hi_reg` followed by the bits of `lo_reg` selected
+/// by `lo_mask` and shifted right by `lo_shift`.
 struct AxpAdcChannel {
   const char *name;
   /// Engineering units per raw count (mV, mA, degrees Celsius, ...).
@@ -93,6 +98,11 @@ struct AxpAdcChannel {
   uint8_t lo_reg;
   uint8_t lo_mask;
   uint8_t lo_bits;
+  /// Right shift applied to the low register before it is joined to the high
+  /// part, so both layouts the chips use can be described: zero when the low
+  /// bits sit at the bottom of the register (AXP192's 4 and 5 bit tails) and the
+  /// distance to move them down when they sit at the top.
+  uint8_t lo_shift;
 };
 
 /// Tests `(register & mask) == value`, which covers both single bit flags and
@@ -150,10 +160,16 @@ struct AxpNumber {
   uint8_t max_code;
 };
 
-/// A single-bit setting that can be switched on and off, addressed by name.
+/// A setting that can be switched on and off, addressed by name.
+///
+/// The field may span more than one bit: `on_code` is the value written for
+/// "on", because a group of bits has to be written in one go (1 for a plain
+/// single-bit setting, 0x1F for something like the five DCDC under-voltage bits,
+/// where setting only bit 0 would silently drop the other four).
 struct AxpFlag {
   const char *name;
   AxpBitField field;
+  uint8_t on_code{1};
 };
 
 /// One interrupt source. Indices are relative to the model's interrupt bases.
@@ -188,6 +204,8 @@ struct AxpModel {
   AxpBitField power_off;
   AxpBitField restart;
   AxpBitField gauge_reset;
+  /// Register holding the chip ID, or AXP_REG_NONE for chips that have none
+  /// (the AXP192 leaves this out on purpose; setup() cannot check it there).
   uint8_t chip_id_reg;
   uint8_t chip_id;
   uint8_t status_base;
@@ -229,7 +247,9 @@ class AxpComponent : public PollingComponent, public i2c::I2CDevice {
   float get_setup_priority() const override { return setup_priority::IO; }
 
   const AxpModel &get_model() const { return *this->model_; }
-  /// True once setup() found the expected chip ID.
+  /// True once setup() has confirmed the chip is the one configured. Chips
+  /// without an ID register are trusted once the bus answered, so this is true
+  /// after a successful setup() rather than a real identification.
   bool is_chip_ready() const { return this->chip_ready_; }
 
   /// Look a rail up by name; returns nullptr when this chip has no such output.
@@ -277,6 +297,10 @@ class AxpComponent : public PollingComponent, public i2c::I2CDevice {
 
   /// Refresh the cached status registers and return whether that worked.
   bool update_status();
+  /// Whether the cached status registers hold a value read from the chip. False
+  /// before the first successful poll and after a failed one, so entities can
+  /// stay quiet instead of reporting "off" for a bus they cannot reach.
+  bool has_status() const { return this->status_valid_; }
   /// Read a flag from the cache filled by update_status().
   bool status_bit(const AxpStatusBit &bit) const;
 

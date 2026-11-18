@@ -1,2279 +1,784 @@
+// Register values below come from the X-Powers AXP192 datasheet V1.2. Section
+// numbers refer to that document. Where the datasheet disagrees with itself the
+// explicit register table wins, and the discrepancy is noted at the entry.
+//
+// The AXP192 has no chip ID register, so `chip_id_reg` is AXP_REG_NONE and
+// setup() can only check that the bus answers.
+
 #include "axp192.h"
-#include "esphome/core/hal.h"
 
-namespace esphome {
-namespace axp192 {
-
-static const char *TAG = "axp192";
-
-void AXP192::AXP192::setup()
-{
-    ESP_LOGCONFIG(TAG, "Setting Up AXP192 PMU...");
-
-    // Init, check the chip ID
-    // If no valid ID (0x03) was returned, call it failed. //was 0x4A
-    if (!this->initImpl()) {
-        ESP_LOGE(TAG, "Failed to read Chip ID, Exiting...");
-        this->mark_failed();
-        return;
-    }
-
-
-    ESP_LOGCONFIG(TAG, "Chip ID:0x%x", this->getChipID());
-    delay(10);
-    //DC1 is MCU supply
-    // Disable unused channels
-    this->disableDC2(); //Unused?
-    this->enableDC3(); //LCD Backlight so need on
-
-//    this->enableDLDO1(); //LDO1 always on anyway, remove
-    this->enableDLDO2(); //Periferal VDD & display power
-    this->disableDLDO3(); //Vibration Motor VDD
-
-    this->clearIrqStatus();
-
-    this->configureAdcMeasure(); //Enable all monitoring except external TS pin and GPIO ADC
-
-    // It is necessary to disable the detection function of the TS pin on the board
-    // without the battery temperature detection function, otherwise it will cause abnormal charging
-    this->disableTSPinMeasure();
-
-    // Disable all interrupts
-    this->disableIRQ(XPOWERS_AXP192_ALL_IRQ);
-    // Clear all interrupt flags
-    this->clearIrqStatus();
-    // Enable the required interrupt function
-
-    // All these need updating as interrrupts have all changed
-    // this->enableIRQ(
-    //     XPOWERS_AXP192_BAT_INSERT_IRQ    | XPOWERS_AXP192_BAT_REMOVE_IRQ      |   //BATTERY
-    //     XPOWERS_AXP192_VBUS_INSERT_IRQ   | XPOWERS_AXP192_VBUS_REMOVE_IRQ     |   //VBUS
-    //     XPOWERS_AXP192_PKEY_SHORT_IRQ    | XPOWERS_AXP192_PKEY_LONG_IRQ       |   //POWER KEY
-    //     XPOWERS_AXP192_BAT_CHG_DONE_IRQ  | XPOWERS_AXP192_BAT_CHG_START_IRQ       //CHARGE
-    //     // XPOWERS_AXP192_PKEY_NEGATIVE_IRQ | XPOWERS_AXP192_PKEY_POSITIVE_IRQ   |   //POWER KEY
-    // );
-
-
-    /*
-      The default setting is CHGLED (AXP192 GPIO1) is automatically controlled by the this->
-    - XPOWERS_CHG_LED_OFF,
-    - XPOWERS_CHG_LED_BLINK_1HZ,
-    - XPOWERS_CHG_LED_BLINK_4HZ,
-    - XPOWERS_CHG_LED_ON,
-    - XPOWERS_CHG_LED_CTRL_CHG,
-    * */
-
-    // this->setChargingLedMode(XPOWERS_CHG_LED_OFF); //Not connected in Core2 so remove
-
-    // Set the precharge charging current
-    // this->setPrechargeCurr(XPOWERS_AXP192_PRECHARGE_50MA); //NA in AXP192 so remove
-    // Set constant current charge current limit
-    this->setChargerConstantCurr(XPOWERS_AXP192_CHG_CUR_200MA);
-    // Set stop charging termination current
-    this->setChargerTerminationCurr(XPOWERS_AXP192_CHG_ITERM_25MA);
-
-    // Set charge cut-off voltage
-    this->setChargeTargetVoltage(XPOWERS_AXP192_CHG_VOL_4V1);
-
-    // Set the watchdog trigger event type
-    // this->setWatchdogConfig(XPOWERS_AXP192_WDT_IRQ_TO_PIN);
-    // Set watchdog timeout
-    // this->setWatchdogTimeout(XPOWERS_AXP192_WDT_TIMEOUT_4S); //NA in AXP192 so remove
-    // Enable watchdog to trigger interrupt event
-    // this->enableWatchdog(); //NA in AXP192 so remove
-
-    // Set the time of pressing the button to turn off
-    this->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
-    uint8_t opt = this->getPowerKeyPressOffTime();
-    switch (opt) {
-    case XPOWERS_POWEROFF_4S:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOffTime: 4 Second");
-        break;
-    case XPOWERS_POWEROFF_6S:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOffTime: 6 Second");
-        break;
-    case XPOWERS_POWEROFF_8S:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOffTime: 8 Second");
-        break;
-    case XPOWERS_POWEROFF_10S:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOffTime: 10 Second");
-        break;
-    default:
-        break;
-    }
-    // Set the button power-on press time
-    this->setPowerKeyPressOnTime(XPOWERS_POWERON_1S);
-    opt = this->getPowerKeyPressOnTime();
-    switch (opt) {
-    case XPOWERS_POWERON_128MS:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOnTime: 128 Ms");
-        break;
-    case XPOWERS_POWERON_512MS:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOnTime: 512 Ms");
-        break;
-    case XPOWERS_POWERON_1S:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOnTime: 1 Second");
-        break;
-    case XPOWERS_POWERON_2S:
-        ESP_LOGCONFIG(TAG, "PowerKeyPressOnTime: 2 Second");
-        break;
-    default:
-        break;
-    }
-
-    // Enable internal ADC detection
-    this->enableBattDetection();
-
-    ESP_LOGI(TAG, "AXP192 PMU Init Success!");
-}
-
-
-
-void AXP192::AXP192::loop(){ }
-
-
-void AXP192::AXP192::dump_config()
-{
-    ESP_LOGCONFIG(TAG, "AXP192:");
-    ESP_LOGCONFIG(TAG, "DC1  : %s   Voltage:%u mV",  this->isEnableDC1()  ? "+" : "-", this->getDC1Voltage());
-    ESP_LOGCONFIG(TAG, "DC2  : %s   Voltage:%u mV",  this->isEnableDC2()  ? "+" : "-", this->getDC2Voltage());
-    ESP_LOGCONFIG(TAG, "DC3  : %s   Voltage:%u mV",  this->isEnableDC3()  ? "+" : "-", this->getDC3Voltage());
-    ESP_LOGCONFIG(TAG, "ALDO1: %s   Voltage:%u mV",  this->isEnableALDO1()  ? "+" : "-", this->getALDO1Voltage());
-    ESP_LOGCONFIG(TAG, "ALDO2: %s   Voltage:%u mV",  this->isEnableALDO2()  ? "+" : "-", this->getALDO2Voltage());
-    ESP_LOGCONFIG(TAG, "ALDO3: %s   Voltage:%u mV",  this->isEnableALDO3()  ? "+" : "-", this->getALDO3Voltage());
-    ESP_LOGCONFIG(TAG, "ALDO4: %s   Voltage:%u mV",  this->isEnableALDO4()  ? "+" : "-", this->getALDO4Voltage());
-    ESP_LOGCONFIG(TAG, "DLDO3: %s   Voltage:%u mV",  this->isEnableDLDO3()  ? "+" : "-", this->getDLDO3Voltage());
-    ESP_LOGCONFIG(TAG, "DLDO2: %s   Voltage:%u mV",  this->isEnableDLDO2()  ? "+" : "-", this->getDLDO2Voltage());
-
-}
-
-
-/*
-*  Convenient functions to operate with registers, implement with internal ESPHome method.
-*/
-
-int AXP192::readRegister(uint8_t reg)
-{
-    uint8_t val;
-    bool ret = this->read_byte(reg, &val);
-
-    if (!ret) {
-        ESP_LOGE(TAG, "I2C read error at reg 0x%02X", reg);
-        return -1;
-    }
-    return static_cast<int>(val);
-}
-
-int AXP192::writeRegister(uint8_t reg, uint8_t val)
-{
-    bool ret = this->write_byte(reg, val);
-    if ( !ret ) {
-         ESP_LOGE(TAG, "I2C write error at reg 0x%02X", reg);
-        return -1;
-    }
-    return ret ? 0 : -1;
-}
-
-inline bool AXP192::clrRegisterBit(uint8_t registers, uint8_t bit)
-{
-    uint8_t val;
-    bool ret = this->read_byte(registers, &val);
-
-    if (!ret) {
-        ESP_LOGE(TAG, "I2C read error at reg 0x%02X", registers);
-        ESP_LOGE(TAG, "Error when clear the register bit %d", bit);
-        return false;
-    }
-    // Set bit to 0
-    val = val & (~_BV(bit));
-    return this -> write_byte(registers, val);
-}
-
-inline bool AXP192::setRegisterBit(uint8_t registers, uint8_t bit)
-{
-    uint8_t val;
-    bool ret = this->read_byte(registers, &val);
-
-    if (!ret) {
-        ESP_LOGE(TAG, "I2C write error at reg 0x%02X", registers);
-        ESP_LOGE(TAG, "Error when set the register bit %d", bit);
-        return false;
-    }
-    // Set bit to 0
-    val = val | (_BV(bit));
-    return this -> write_byte(registers, val);
-}
-
-inline bool AXP192::getRegisterBit(uint8_t registers, uint8_t bit)
-{
-    uint8_t val;
-    bool ret = this->read_byte(registers, &val);
-    if(!ret) {
-        ESP_LOGE(TAG, "I2C read error at reg 0x%02X", registers);
-        return false;
-    }
-    return val & _BV(bit);
-}
-
-//new function for ADC reads
-inline uint32_t AXP192::readRegisterH8M8L8(uint8_t highReg, uint8_t medReg, uint8_t lowReg)
-{
-    uint8_t h8, m8, l8;
-    bool ret1 = this->read_byte(highReg, &h8);
-    if (!ret1) {
-        ESP_LOGE(TAG, "I2C read error at reg 0x%02X", highReg);
-        return 0;
-    }
-    bool ret2 = this->read_byte(medReg, &m8);
-    if (!ret2) {
-        ESP_LOGE(TAG, "I2C read error at reg 0x%02X", medReg);
-        return 0;
-    }
-    bool ret3 = this->read_byte(lowReg, &l8);
-    if (!ret3) {
-        ESP_LOGE(TAG, "I2C read error at reg 0x%02X", lowReg);
-        return 0;
-    }
-    return (h8 << 16) | (m8 << 8) | (l8);
-}
-
-inline uint16_t AXP192::readRegisterH8L4(uint8_t highReg, uint8_t lowReg)
-{
-    uint8_t h8, l4;
-    bool ret1 = this->read_byte(highReg, &h8);
-    if (!ret1) {
-        ESP_LOGE(TAG, "I2C write error at reg 0x%02X", highReg);
-        return 0;
-    }
-    bool ret2 = this->read_byte(lowReg, &l4);
-    if (!ret1) {
-        ESP_LOGE(TAG, "I2C write error at reg 0x%02X", lowReg);
-        return 0;
-    }
-    return (h8 << 4) | (l4 & 0x0F);
-}
-
-inline uint16_t AXP192::readRegisterH6L8(uint8_t highReg, uint8_t lowReg)
-{
-    uint8_t h6, l8;
-    bool ret1 = this->read_byte(highReg, &h6);
-    if (!ret1) {
-        ESP_LOGE(TAG, "I2C write error at reg 0x%02X", highReg);
-        return 0;
-    }
-    bool ret2 = this->read_byte(lowReg, &l8);
-    if (!ret1) {
-        ESP_LOGE(TAG, "I2C write error at reg 0x%02X", lowReg);
-        return 0;
-    }
-    return ((h6 & 0x3F) << 8) | l8;
-}
-
-inline uint16_t AXP192::readRegisterH5L8(uint8_t highReg, uint8_t lowReg)
-{
-    uint8_t h5, l8;
-    bool ret1 = this->read_byte(highReg, &h5);
-    if (!ret1) {
-        ESP_LOGE(TAG, "I2C write error at reg 0x%02X", highReg);
-        return 0;
-    }
-    bool ret2 = this->read_byte(lowReg, &l8);
-    if (!ret1) {
-        ESP_LOGE(TAG, "I2C write error at reg 0x%02X", lowReg);
-        return 0;
-    }
-    return ((h5 & 0x1F) << 8) | l8;
-}
-
-// GPIO functions
-void AXP192::setGpioPin(uint8_t gpio, uint8_t pin_state){
-    //Assumes GPIO with external pullups, active low
-    uint8_t val=0;
-
-    switch (gpio) {
-    case 0:
-        val = readRegister(XPOWERS_AXP192_GPIO0_MODE);
-        if (val == -1) return;
-        val &= 0xF8;
-        writeRegister(XPOWERS_AXP192_GPIO0_MODE, val | ((pin_state == 1) ? 0x06 : 0x05)); //Floating Output or Low output
-        break;
-    case 1:
-        val = readRegister(XPOWERS_AXP192_GPIO1_MODE);
-        if (val == -1) return;
-        val &= 0xF8;
-        writeRegister(XPOWERS_AXP192_GPIO1_MODE, val | ((pin_state == 1) ? 0x05 : 0x06)); //Low output (on) or Floating output (off)
-        break;
-    case 2:
-        val = readRegister(XPOWERS_AXP192_GPIO2_MODE);
-        if (val == -1) return;
-        val &= 0xF8;
-        writeRegister(XPOWERS_AXP192_GPIO2_MODE, val | ((pin_state == 1) ? 0x06 : 0x05)); //Floating Output or Low output
-        break;
-    case 3:
-        val = readRegister(XPOWERS_AXP192_GPIO3_MODE);
-        if (val == -1) return;
-        val &= 0xF8;
-        writeRegister(XPOWERS_AXP192_GPIO3_MODE, val | (0x06)); //Floating Output
-        break;
-    case 4:
-        val = readRegister(XPOWERS_AXP192_GPIO4_MODE);
-        if (val == -1) return;
-        val &= 0xF8;
-        writeRegister(XPOWERS_AXP192_GPIO4_MODE, val | (0x06)); //Floating Output
-        break;
-    default:
-        break;
-    }
-
-}
-
-
-/*
- * PMU status functions
- */
-uint16_t AXP192::status()
-{
-    uint16_t status1 = readRegister(XPOWERS_AXP192_STATUS1) & 0x1F;
-    uint16_t status2 = readRegister(XPOWERS_AXP192_STATUS2) & 0x1F;;
-    return (status1 << 8) | (status2);
-}
-
-
-// getBatPresentState
-bool AXP192::isACINPresent(void){ return getRegisterBit(XPOWERS_AXP192_STATUS1, 7) == 1; } //new
-bool AXP192::isACINValid(void){ return getRegisterBit(XPOWERS_AXP192_STATUS1, 6) == 1; } //new
-bool AXP192::isVbusIn(void){ return getRegisterBit(XPOWERS_AXP192_STATUS1, 5) == 1; } //updated
-bool AXP192::isVbusGood(void){ return getRegisterBit(XPOWERS_AXP192_STATUS1, 4) == 1; } //was 5
-//bit 3 Vbus above Vhold before insert?
-bool AXP192::isDischarge(void){ return getRegisterBit(XPOWERS_AXP192_STATUS1, 2) == 0x00; } //updated
-//bit 1 ACIN and VBus pin shorted on PCB
-//bit 0 Trigger boot from ACIN/VBus or not
-
-bool AXP192::getThermalRegulationStatus(void){ return getRegisterBit(XPOWERS_AXP192_STATUS2, 7); } //was 1
-bool AXP192::isCharging(void){ return getRegisterBit(XPOWERS_AXP192_STATUS2, 6) == 1; } //updated 1=charging, 0=not charging or finished
-bool AXP192::isBatteryConnect(void){ return getRegisterBit(XPOWERS_AXP192_STATUS2, 5) == 1; } //was 3
-//bit 4 reserved
-bool AXP192::isBatInActiveModeState(void){ return getRegisterBit(XPOWERS_AXP192_STATUS2, 3) ==1; } // was 2
-bool AXP192::isChargingCurrentLessThanExpected(void){ return getRegisterBit(XPOWERS_AXP192_STATUS2, 2) == 1; } //new
-//bit 1 reserved
-//bit 0 reserved
-
-
-// //Remove these
-// bool AXP192::getCurrentLimitStatus(void){ return getRegisterBit(XPOWERS_AXP192_STATUS1, 0); } //NA, remove?
-
-// bool AXP192::isStandby(void){ return (readRegister(XPOWERS_AXP192_STATUS2) >> 5) == 0x00; } //NA?
-
-// bool AXP192::isPowerOn(void){ return getRegisterBit(XPOWERS_AXP192_STATUS2, 4); }  //NA?
-
-// bool AXP192::isPowerOff(void){ return getRegisterBit(XPOWERS_AXP192_STATUS2, 4); } //NA?
-
-
-// xpowers_chg_status_t AXP192::getChargerStatus(void){ //NA remove
-//     int val = readRegister(XPOWERS_AXP192_STATUS2);
-//     if (val == -1)return XPOWERS_AXP192_CHG_STOP_STATE;
-//     val &= 0x07;
-//     return (xpowers_chg_status_t)val;
-// }
-
-/*
- * PMU common configuration
- */
-
-/**
- * @brief   Internal off-discharge enable for DCDC & LDO & SWITCH
- */
-
-void AXP192::enableInternalDischarge(void){ setRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 5); }
-
-void AXP192::disableInternalDischarge(void){ clrRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 5); }
-
-
-/**
- * @brief   PWROK PIN pull low to Restart
- */
-void AXP192::enablePwrOkPinPullLow(void){ setRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 3); }
-
-void AXP192::disablePwrOkPinPullLow(void){ clrRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 3); }
-
-void AXP192::enablePwronShutPMIC(void){ setRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 2); }
-
-void AXP192::disablePwronShutPMIC(void){ clrRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 2); }
-
-
-/**
- * @brief  Restart the SoC System, POWOFF/POWON and reset the related registers
- * @retval None
- */
-void AXP192::reset(void){ setRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 1); }
-
-/**
- * @brief  Set shutdown, calling shutdown will turn off all power channels,
- *         only VRTC belongs to normal power supply
- * @retval None
- */
-void AXP192::shutdown(void){ setRegisterBit(XPOWERS_AXP192_COMMON_CONFIG, 0); }
-
-// /**
-//  * @param  opt: 0:115 , 1:125 , 2:135
-//  */
-// void AXP192::setDieOverTempLevel1(uint8_t opt)
-// {
-//     int val = readRegister(XPOWERS_AXP192_DIE_TEMP_CTRL);
-//     if (val == -1)return;
-//     val &= 0xF9;
-//     writeRegister(XPOWERS_AXP192_DIE_TEMP_CTRL, val | (opt << 1));
-// }
-
-// uint8_t AXP192::getDieOverTempLevel1(void){ return (readRegister(XPOWERS_AXP192_DIE_TEMP_CTRL) & 0x06); }
-
-// void AXP192::enableDieOverTempDetect(void){ setRegisterBit(XPOWERS_AXP192_DIE_TEMP_CTRL, 0); }
-
-// void AXP192::disableDieOverTempDetect(void){ clrRegisterBit(XPOWERS_AXP192_DIE_TEMP_CTRL, 0); }
-
-// // Linear Charger Vsys voltage dpm
-// void AXP192::setLinearChargerVsysDpm(xpower_chg_dpm_t opt)
-// {
-//     int val = readRegister(XPOWERS_AXP192_MIN_SYS_VOL_CTRL);
-//     if (val == -1)return;
-//     val &= 0x8F;
-//     writeRegister(XPOWERS_AXP192_MIN_SYS_VOL_CTRL, val | (opt << 4));
-// }
-
-// uint8_t AXP192::getLinearChargerVsysDpm(void)
-// {
-//     int val = readRegister(XPOWERS_AXP192_MIN_SYS_VOL_CTRL);
-//     if (val == -1)return 0;
-//     val &= 0x70;
-//     return (val & 0x70) >> 4;
-// }
-
-
-/**
- * @brief  Set VBUS Voltage Input Limit.
- * @param  opt: View the related chip type xpowers_AXP192_vbus_vol_limit_t enumeration
- *              parameters in "axp192_cost.h"
- */
-void AXP192::setVbusVoltageLimit(uint8_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_INPUT_VOL_LIMIT_CTRL);
-    if (val == -1)return;
-    val &= 0xF0;
-    writeRegister(XPOWERS_AXP192_INPUT_VOL_LIMIT_CTRL, val | (opt & 0x0F));
-}
-
-/**
-* @brief  Get VBUS Voltage Input Limit.
-* @retval View the related chip type xpowers_axp192_vbus_vol_limit_t enumeration
-*              parameters in "axp192_cost.h"
-*/
-uint8_t AXP192::getVbusVoltageLimit(void){ return ( readRegister(XPOWERS_AXP192_INPUT_VOL_LIMIT_CTRL) & 0x0F); }
-
-/**
-* @brief  Set VBUS Current Input Limit.
-* @param  opt: View the related chip type xpowers_axp192_vbus_cur_limit_t enumeration
-*              parameters in "axp192_cost.h"
-* @retval true valid false invalid
-*/
-bool AXP192::setVbusCurrentLimit(uint8_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_INPUT_CUR_LIMIT_CTRL);
-    if (val == -1)return false;
-    val &= 0xF8;
-    return 0 == writeRegister(XPOWERS_AXP192_INPUT_CUR_LIMIT_CTRL, val | (opt & 0x07));
-}
-
-/**
-* @brief  Get VBUS Current Input Limit.
-* @retval View the related chip type xpowers_axp192_vbus_cur_limit_t enumeration
-*              parameters in "axp192_cost.h"
-*/
-uint8_t AXP192::getVbusCurrentLimit(void){ return (readRegister(XPOWERS_AXP192_INPUT_CUR_LIMIT_CTRL) & 0x07); }
-
-/**
- * @brief  Reset the fuel gauge
- */
-void AXP192::resetGauge(void){ setRegisterBit(XPOWERS_AXP192_RESET_FUEL_GAUGE, 3); }
-
-/**
- * @brief   reset the gauge besides reset
- */
-void AXP192::resetGaugeBesides(void){ setRegisterBit(XPOWERS_AXP192_RESET_FUEL_GAUGE, 2); }
-
-/**
- * @brief Gauge Module
- */
-void AXP192::enableGauge(void){ setRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 3); }
-
-void AXP192::disableGauge(void){ clrRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 3); }
-
-/**
- * @brief  Button Battery charge
- */
-bool AXP192::enableButtonBatteryCharge(void){ return setRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 2); } //NA remove
-
-bool AXP192::disableButtonBatteryCharge(void){ return clrRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 2); } //NA remove
-
-bool AXP192::isEnableButtonBatteryCharge(){ return getRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 2); } //NA remove
-
-
-//Button battery charge termination voltage setting
-bool AXP192::setButtonBatteryChargeVoltage(uint16_t millivolt) //NA remove
-{
-    if (millivolt % XPOWERS_AXP192_BTN_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! Button battery charging step voltage is %u mV", XPOWERS_AXP192_BTN_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_BTN_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! The minimum charge termination voltage of the coin cell battery is %u mV", XPOWERS_AXP192_BTN_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_BTN_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! The minimum charge termination voltage of the coin cell battery is %u mV", XPOWERS_AXP192_BTN_VOL_MAX);
-        return false;
-    }
-    int val =  readRegister(XPOWERS_AXP192_BTN_BAT_CHG_VOL_SET);
-    if (val == -1)return 0;
-    val  &= 0xF8;
-    val |= (millivolt - XPOWERS_AXP192_BTN_VOL_MIN) / XPOWERS_AXP192_BTN_VOL_STEPS;
-    return 0 == writeRegister(XPOWERS_AXP192_BTN_BAT_CHG_VOL_SET, val);
-}
-
-uint16_t AXP192::getButtonBatteryVoltage(void){
-    int val =  readRegister(XPOWERS_AXP192_BTN_BAT_CHG_VOL_SET);
-    if (val == -1)return 0;
-    return (val & 0x07) * XPOWERS_AXP192_BTN_VOL_STEPS + XPOWERS_AXP192_BTN_VOL_MIN;
-}
-
-
-// /**
-//  * @brief Cell Battery charge
-//  */
-// void AXP192::enableCellbatteryCharge(void){ setRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 1); }
-
-// void AXP192::disableCellbatteryCharge(void){ clrRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 1); }
-
-// /**
-//  * @brief  Watchdog Module
-//  */
-// void AXP192::enableWatchdog(void){
-//     setRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 0);
-//     enableIRQ(XPOWERS_AXP192_WDT_EXPIRE_IRQ);
-// }
-
-// void AXP192::disableWatchdog(void)
-// {
-//     disableIRQ(XPOWERS_AXP192_WDT_EXPIRE_IRQ);
-//     clrRegisterBit(XPOWERS_AXP192_CHARGE_GAUGE_WDT_CTRL, 0);
-// }
-
-// /**
-//  * @brief Watchdog Config
-//  * @note
-//  * @param  opt: 0: IRQ Only 1: IRQ and System reset  2: IRQ, System Reset and Pull down PWROK 1s  3: IRQ, System Reset, DCDC/LDO PWROFF & PWRON
-//  * @retval None
-//  */
-// void AXP192::setWatchdogConfig(xpowers_wdt_config_t opt)
-// {
-//     int val = readRegister(XPOWERS_AXP192_WDT_CTRL);
-//     if (val == -1)return;
-//     val &= 0xCF;
-//     writeRegister(XPOWERS_AXP192_WDT_CTRL, val | (opt << 4));
-// }
-
-// uint8_t AXP192::getWatchConfig(void)
-// {
-//     return (readRegister(XPOWERS_AXP192_WDT_CTRL) & 0x30) >> 4;
-// }
-
-// void AXP192::clrWatchdog(void)
-// {
-//     setRegisterBit(XPOWERS_AXP192_WDT_CTRL, 3);
-// }
-
-
-// void AXP192::setWatchdogTimeout(xpowers_wdt_timeout_t opt)
-// {
-//     int val = readRegister(XPOWERS_AXP192_WDT_CTRL);
-//     if (val == -1)return;
-//     val &= 0xF8;
-//     writeRegister(XPOWERS_AXP192_WDT_CTRL, val | opt);
-// }
-
-// uint8_t AXP192::getWatchdogTimerout(void){ return readRegister(XPOWERS_AXP192_WDT_CTRL) & 0x07; }
-
-// /**
-//  * @brief  Low battery warning threshold 5-20%, 1% per step
-//  * @param  percentage:   5 ~ 20
-//  * @retval None
-//  */
-// void AXP192::setLowBatWarnThreshold(uint8_t percentage)
-// {
-//     if (percentage < 5 || percentage > 20)return;
-//     int val = readRegister(XPOWERS_AXP192_LOW_BAT_WARN_SET);
-//     if (val == -1)return;
-//     val &= 0x0F;
-//     writeRegister(XPOWERS_AXP192_LOW_BAT_WARN_SET, val | ((percentage - 5) << 4));
-// }
-
-// uint8_t AXP192::getLowBatWarnThreshold(void)
-// {
-//     int val = readRegister(XPOWERS_AXP192_LOW_BAT_WARN_SET);
-//     if (val == -1)return 0;
-//     val &= 0xF0;
-//     val >>= 4;
-//     return val;
-// }
-
-// /**
-//  * @brief  Low battery shutdown threshold 0-15%, 1% per step
-//  * @param  opt:   0 ~ 15
-//  * @retval None
-//  */
-// void AXP192::setLowBatShutdownThreshold(uint8_t opt)
-// {
-//     if (opt > 15) {
-//         opt = 15;
-//     }
-//     int val = readRegister(XPOWERS_AXP192_LOW_BAT_WARN_SET);
-//     if (val == -1)return;
-//     val &= 0xF0;
-//     writeRegister(XPOWERS_AXP192_LOW_BAT_WARN_SET, val | opt);
-// }
-
-// uint8_t AXP192::getLowBatShutdownThreshold(void)
-// {
-//     return (readRegister(XPOWERS_AXP192_LOW_BAT_WARN_SET) & 0x0F);
-// }
-
-//!  PWRON statu  20
-// POWERON always high when EN Mode as POWERON Source
-bool AXP192::isPoweronAlwaysHighSource(){ return getRegisterBit(XPOWERS_AXP192_PWRON_STATUS, 5); }
-
-// Battery Insert and Good as POWERON Source
-bool AXP192::isBattInsertOnSource(){ return getRegisterBit(XPOWERS_AXP192_PWRON_STATUS, 4); }
-
-// Battery Voltage > 3.3V when Charged as Source
-bool AXP192::isBattNormalOnSource(){ return getRegisterBit(XPOWERS_AXP192_PWRON_STATUS, 3); }
-
-// Vbus Insert and Good as POWERON Source
-bool AXP192::isVbusInsertOnSource(){ return getRegisterBit(XPOWERS_AXP192_PWRON_STATUS, 2); }
-
-// IRQ PIN Pull-down as POWERON Source
-bool AXP192::isIrqLowOnSource(){ return getRegisterBit(XPOWERS_AXP192_PWRON_STATUS, 1); }
-
-// POWERON low for on level when POWERON Mode as POWERON Source
-bool AXP192::isPwronLowOnSource(){ return getRegisterBit(XPOWERS_AXP192_PWRON_STATUS, 0); }
-
-xpower_power_on_source_t AXP192::getPowerOnSource()
-{
-    int val = readRegister(XPOWERS_AXP192_PWRON_STATUS);
-    if (val == -1) return XPOWER_POWERON_SRC_UNKONW;
-    return (xpower_power_on_source_t)val;
-}
-
-//!  PWROFF status  21
-// Die Over Temperature as POWEROFF Source
-bool AXP192::isOverTemperatureOffSource(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 7); }
-
-// DCDC Over Voltage as POWEROFF Source
-bool AXP192::isDcOverVoltageOffSource(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 6); }
-
-// DCDC Under Voltage as POWEROFF Source
-bool AXP192::isDcUnderVoltageOffSource(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 5); }
-
-// VBUS Over Voltage as POWEROFF Source
-bool AXP192::isVbusOverVoltageOffSource(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 4); }
-
-// Vsys Under Voltage as POWEROFF Source
-bool AXP192::isVsysUnderVoltageOffSource(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 3); }
-
-// POWERON always low when EN Mode as POWEROFF Source
-bool AXP192::isPwronAlwaysLowOffSource(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 2); }
-
-// Software configuration as POWEROFF Source
-bool AXP192::isSwConfigOffSource(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 1); }
-
-// POWERON Pull down for off level when POWERON Mode as POWEROFF Source
-bool AXP192::isPwrSourcePullDown(){ return getRegisterBit(XPOWERS_AXP192_PWROFF_STATUS, 0); }
-
-xpower_power_off_source_t AXP192::getPowerOffSource(){ 
-    int val = readRegister(XPOWERS_AXP192_PWROFF_STATUS);
-    if (val == -1) return XPOWER_POWEROFF_SRC_UNKONW;
-    return (xpower_power_off_source_t)val;
-}
-
-//!REG 22H
-void AXP192::enableOverTemperatureLevel2PowerOff(){ setRegisterBit(XPOWERS_AXP192_PWROFF_EN, 2); }
-
-void AXP192::disableOverTemperaturePowerOff(){ clrRegisterBit(XPOWERS_AXP192_PWROFF_EN, 2); }
-
-// CHANGE:  void AXP192::enablePwrOnOverVolOffLevelPowerOff()
-void AXP192::enableLongPressShutdown(){ setRegisterBit(XPOWERS_AXP192_PWROFF_EN, 1); }
-
-// CHANGE:  void AXP192::disablePwrOnOverVolOffLevelPowerOff()
-void AXP192::disableLongPressShutdown(){ clrRegisterBit(XPOWERS_AXP192_PWROFF_EN, 1); }
-
-//CHANGE: void AXP192::enablePwrOffSelectFunction()
-void AXP192::setLongPressRestart(){ setRegisterBit(XPOWERS_AXP192_PWROFF_EN, 0); }
-
-//CHANGE: void AXP192::disablePwrOffSelectFunction()
-void AXP192::setLongPressPowerOFF(){ clrRegisterBit(XPOWERS_AXP192_PWROFF_EN, 0); }
-
-//!REG 23H
-// DCDC 120%(130%) high voltage turn off PMIC function
-void AXP192::enableDCHighVoltageTurnOff(){ setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 5); }
-
-void AXP192::disableDCHighVoltageTurnOff(){ clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 5); }
-
-// DCDC3 85% low voltage turn Off PMIC function
-void AXP192::enableDC3LowVoltageTurnOff(){ setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 2); }
-
-void AXP192::disableDC3LowVoltageTurnOff(){ clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 2);}
-
-// DCDC2 85% low voltage turn Off PMIC function
-void AXP192::enableDC2LowVoltageTurnOff(){ setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 1);}
-
-void AXP192::disableDC2LowVoltageTurnOff(){ clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 1);}
-
-// DCDC1 85% low voltage turn Off PMIC function
-void AXP192::enableDC1LowVoltageTurnOff(){ setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 0); }
-
-void AXP192::disableDC1LowVoltageTurnOff(){ clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 0);}
-
-
-// Set the minimum system operating voltage inside the PMU,
-// below this value will shut down the PMU,Adjustment range 2600mV~3300mV
-bool AXP192::setSysPowerDownVoltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_VSYS_VOL_THRESHOLD_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_VSYS_VOL_THRESHOLD_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_VSYS_VOL_THRESHOLD_MIN) {
-        ESP_LOGE(TAG, "Mistake ! The minimum settable voltage of VSYS is %u mV", XPOWERS_AXP192_VSYS_VOL_THRESHOLD_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_VSYS_VOL_THRESHOLD_MAX) {
-        ESP_LOGE(TAG, "Mistake ! The maximum settable voltage of VSYS is %u mV", XPOWERS_AXP192_VSYS_VOL_THRESHOLD_MAX);
-        return false;
-    }
-    int val = readRegister(XPOWERS_AXP192_VOFF_SET);
-    if (val == -1)return false;
-    val &= 0xF8;
-    return 0 == writeRegister(XPOWERS_AXP192_VOFF_SET, val | ((millivolt - XPOWERS_AXP192_VSYS_VOL_THRESHOLD_MIN) / XPOWERS_AXP192_VSYS_VOL_THRESHOLD_STEPS));
-}
-
-uint16_t AXP192::getSysPowerDownVoltage(void)
-{
-    int val = readRegister(XPOWERS_AXP192_VOFF_SET);
-    if (val == -1)return false;
-    return (val & 0x07) * XPOWERS_AXP192_VSYS_VOL_THRESHOLD_STEPS + XPOWERS_AXP192_VSYS_VOL_THRESHOLD_MIN;
-}
-
-//  PWROK setting and PWROFF sequence control 25.
-// Check the PWROK Pin enable after all dcdc/ldo output valid 128ms
-void AXP192::enablePwrOk(){ setRegisterBit(XPOWERS_AXP192_PWROK_SEQU_CTRL, 4); }
-
-void AXP192::disablePwrOk(){ clrRegisterBit(XPOWERS_AXP192_PWROK_SEQU_CTRL, 4); }
-
-// POWEROFF Delay 4ms after PWROK enable
-void AXP192::enablePowerOffDelay(){ setRegisterBit(XPOWERS_AXP192_PWROK_SEQU_CTRL, 3); }
-
-// POWEROFF Delay 4ms after PWROK disable
-void AXP192::disablePowerOffDelay(){ clrRegisterBit(XPOWERS_AXP192_PWROK_SEQU_CTRL, 3); }
-
-// POWEROFF Sequence Control the reverse of the Startup
-void AXP192::enablePowerSequence(){ setRegisterBit(XPOWERS_AXP192_PWROK_SEQU_CTRL, 2); }
-
-// POWEROFF Sequence Control at the same time
-void AXP192::disablePowerSequence(){ clrRegisterBit(XPOWERS_AXP192_PWROK_SEQU_CTRL, 2);}
-
-// Delay of PWROK after all power output good
-bool AXP192::setPwrOkDelay(xpower_pwrok_delay_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_PWROK_SEQU_CTRL);
-    if (val == -1)return false;
-    val &= 0xFC;
-    return 0 == writeRegister(XPOWERS_AXP192_PWROK_SEQU_CTRL, val | opt);
-}
-
-xpower_pwrok_delay_t AXP192::getPwrOkDelay(){
-    int val = readRegister(XPOWERS_AXP192_PWROK_SEQU_CTRL);
-    if (val == -1)return XPOWER_PWROK_DELAY_8MS;
-    return (xpower_pwrok_delay_t)(val & 0x03);
-}
-
-//  Sleep and 26
-void AXP192::wakeupControl(xpowers_wakeup_t opt, bool enable)
-{
-    int val = readRegister(XPOWERS_AXP192_SLEEP_WAKEUP_CTRL);
-    if (val == -1)return;
-    enable ? (val |= opt) : (val &= (~opt));
-    writeRegister(XPOWERS_AXP192_SLEEP_WAKEUP_CTRL, val);
-}
-
-bool AXP192::enableWakeup(void){ return setRegisterBit(XPOWERS_AXP192_SLEEP_WAKEUP_CTRL, 1); }
-
-bool AXP192::disableWakeup(void){ return clrRegisterBit(XPOWERS_AXP192_SLEEP_WAKEUP_CTRL, 1); }
-
-bool AXP192::enableSleep(void){ return setRegisterBit(XPOWERS_AXP192_SLEEP_WAKEUP_CTRL, 0); }
-
-bool AXP192::disableSleep(void){ return clrRegisterBit(XPOWERS_AXP192_SLEEP_WAKEUP_CTRL, 0); }
-
-
-//  RQLEVEL/OFFLEVEL/ONLEVEL setting 27
-/**
- * @brief  IRQLEVEL configur
- * @param  opt: 0:1s  1:1.5s  2:2s 3:2.5s
- */
-void AXP192::setIrqLevel(uint8_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL);
-    if (val == -1)return;
-    val &= 0xFC;
-    writeRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL, val | (opt << 4));
-}
-
-/**
- * @brief  OFFLEVEL configuration
- * @param  opt:  0:4s 1:6s 2:8s 3:10s
- */
-void AXP192::setOffLevel(uint8_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL);
-    if (val == -1)return;
-    writeRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL, val | (opt << 2));
-}
-
-/**
- * @brief  ONLEVEL configuration
- * @param  opt: 0:128ms 1:512ms 2:1s  3:2s
- */
-void AXP192::setOnLevel(uint8_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL);
-    if (val == -1)return;
-    writeRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL, val | opt);
-}
-
-
-// DCDC 120%(130%) high voltage turn off PMIC function
-void AXP192::setDCHighVoltagePowerDown(bool en)
-{
-    en ? setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 5) : clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 5);
-}
-
-bool AXP192::getDCHighVoltagePowerDownEn(){ return getRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 5); }
-
-// DCDCS force PWM control
-void AXP192::setDcUVPDebounceTime(uint8_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_DC_FORCE_PWM_CTRL);
-    val &= 0xFC;
-    writeRegister(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, val | opt);
-}
-
-void AXP192::settDC1WorkModeToPwm(uint8_t enable)
-{
-    enable ?
-    setRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 2)
-    : clrRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 2);
-}
-
-void AXP192::settDC2WorkModeToPwm(uint8_t enable)
-{
-    enable ? setRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 3)
-    : clrRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 3);
-}
-
-void AXP192::settDC3WorkModeToPwm(uint8_t enable)
-{
-    enable ?
-    setRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 4)
-    : clrRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 4);
-}
-
-void AXP192::setDCFreqSpreadRangeEn(bool en)
-{
-    en ?
-    setRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 7)
-    :  clrRegisterBit(XPOWERS_AXP192_DC_FORCE_PWM_CTRL, 7);
-}
-
-void AXP192::enableCCM()
-{
-    setRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 6);
-}
-
-void AXP192::disableCCM()
-{
-    clrRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 6);
-}
-
-bool AXP192::isenableCCM()
-{
-    return getRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 6);
-}
-
-enum DVMRamp {
-    XPOWERS_AXP192_DVM_RAMP_15_625US,
-    XPOWERS_AXP192_DVM_RAMP_31_250US,
+namespace esphome::axp192 {
+
+namespace {
+
+using axp_base::AxpAdcChannel;
+using axp_base::AxpBitField;
+using axp_base::AxpEvent;
+using axp_base::AxpFlag;
+using axp_base::AxpLutEntry;
+using axp_base::AxpModel;
+using axp_base::AxpNumber;
+using axp_base::AxpRail;
+using axp_base::AxpSelect;
+using axp_base::AxpStatusFlag;
+using axp_base::AxpVoltageRange;
+
+// --- Voltage windows, 9.11 REG 23H/26H/27H/28H/91H -------------------------
+// Three converters on a 25 mV ladder and three LDOs on a 100 mV one. The
+// datasheet tops DCDC1 and DCDC3 at 3.5 V (code 112 of 128) and DCDC2 at 2.275 V
+// (code 63 of 64); the codes above those are not described, so they are refused
+// rather than guessed at.
+
+constexpr AxpVoltageRange DCDC_700_3500[] = {{700, 25, 0, 112}};
+constexpr AxpVoltageRange DCDC2_700_2275[] = {{700, 25, 0, 63}};
+constexpr AxpVoltageRange LDO_1800_3300[] = {{1800, 100, 0, 15}};
+
+// --- Power outputs ---------------------------------------------------------
+// REG 12H is the output control register: bit 0 DCDC1, bit 1 DCDC3, bit 2 LDO2,
+// bit 3 LDO3, bit 4 DCDC2, bit 6 EXTEN. Its bits 6 and 4 are the same latches as
+// REG 10H bits 2 and 0 ("REG12Hbit6/4 分别对应 REG10Hbit2/0"), so the whole set is
+// written through REG 12H. REG 12H bit 7 is reserved but writable, hence the
+// per-rail masks instead of a whole byte.
+//
+// LDOIO0 has no enable bit: it is GPIO0's third function, so turning it on
+// selects the LDO (010) and turning it off selects float (110) rather than code
+// 0, which would leave GPIO0 driving the load as an open drain output.
+//
+// LDO1 is not listed. It supplies the RTC and is always on with a fixed voltage,
+// so there is nothing to switch or set.
+
+constexpr AxpRail RAILS[] = {
+    {.name = "DCDC1",
+     .ranges = DCDC_700_3500,
+     .max_ma = 1200,
+     .range_count = 1,
+     .flags = 0,
+     .enable_reg = 0x12,
+     .enable_mask = 0x01,
+     .enable_value = 0x01,
+     .disable_value = 0x00,
+     .vsel_reg = 0x26,
+     .vsel_mask = 0x7F,
+     .vsel_shift = 0},
+    {.name = "DCDC2",
+     .ranges = DCDC2_700_2275,
+     .max_ma = 1600,
+     .range_count = 1,
+     .flags = 0,
+     .enable_reg = 0x12,
+     .enable_mask = 0x10,
+     .enable_value = 0x10,
+     .disable_value = 0x00,
+     .vsel_reg = 0x23,
+     .vsel_mask = 0x3F,
+     .vsel_shift = 0},
+    {.name = "DCDC3",
+     .ranges = DCDC_700_3500,
+     .max_ma = 700,
+     .range_count = 1,
+     .flags = 0,
+     .enable_reg = 0x12,
+     .enable_mask = 0x02,
+     .enable_value = 0x02,
+     .disable_value = 0x00,
+     .vsel_reg = 0x27,
+     .vsel_mask = 0x7F,
+     .vsel_shift = 0},
+    {.name = "LDO2",
+     .ranges = LDO_1800_3300,
+     .max_ma = 200,
+     .range_count = 1,
+     .flags = 0,
+     .enable_reg = 0x12,
+     .enable_mask = 0x04,
+     .enable_value = 0x04,
+     .disable_value = 0x00,
+     .vsel_reg = 0x28,
+     .vsel_mask = 0xF0,
+     .vsel_shift = 4},
+    {.name = "LDO3",
+     .ranges = LDO_1800_3300,
+     .max_ma = 200,
+     .range_count = 1,
+     .flags = 0,
+     .enable_reg = 0x12,
+     .enable_mask = 0x08,
+     .enable_value = 0x08,
+     .disable_value = 0x00,
+     .vsel_reg = 0x28,
+     .vsel_mask = 0x0F,
+     .vsel_shift = 0},
+    // GPIO0's function field selects the low noise LDO (010) or float (110);
+    // the remaining functions would leave the pin driving the load.
+    {.name = "LDOIO0",
+     .ranges = LDO_1800_3300,
+     .max_ma = 50,
+     .range_count = 1,
+     .flags = 0,
+     .enable_reg = 0x90,
+     .enable_mask = 0x07,
+     .enable_value = 0x02,
+     .disable_value = 0x06,
+     .vsel_reg = 0x91,
+     .vsel_mask = 0xF0,
+     .vsel_shift = 4},
+    // EXTEN is the chip's switched path to an external regulator: it has a
+    // switch but no voltage of its own.
+    {.name = "EXTEN",
+     .ranges = nullptr,
+     .max_ma = 0,
+     .range_count = 0,
+     .flags = 0,
+     .enable_reg = 0x12,
+     .enable_mask = 0x40,
+     .enable_value = 0x40,
+     .disable_value = 0x00,
+     .vsel_reg = axp_base::AXP_REG_NONE,
+     .vsel_mask = 0x00,
+     .vsel_shift = 0},
 };
 
-//args:enum DVMRamp
-void AXP192::setDVMRamp(uint8_t opt)
-{
-    if (opt > 2)return;
-    opt == 0 ? clrRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 5) : setRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 5);
-}
-
-
-
-/*
- * Power control DCDC1 functions
- */
-bool AXP192::isEnableDC1(void){ return getRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 0); }
-
-bool AXP192::enableDC1(void){ return setRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 0); }
-
-bool AXP192::disableDC1(void){ return clrRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 0); }
-
-bool AXP192::setDC1Voltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_DCDC1_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_DCDC1_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_DCDC1_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! DC1 minimum voltage is %u mV", XPOWERS_AXP192_DCDC1_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_DCDC1_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! DC1 maximum voltage is %u mV", XPOWERS_AXP192_DCDC1_VOL_MAX);
-        return false;
-    }
-    return 0 == writeRegister(XPOWERS_AXP192_DC_VOL0_CTRL, (millivolt - XPOWERS_AXP192_DCDC1_VOL_MIN) / XPOWERS_AXP192_DCDC1_VOL_STEPS);
-}
-
-uint16_t AXP192::getDC1Voltage(void)
-{
-    return (readRegister(XPOWERS_AXP192_DC_VOL0_CTRL) & 0x3F) * XPOWERS_AXP192_DCDC1_VOL_STEPS + XPOWERS_AXP192_DCDC1_VOL_MIN; //was 0x1F
-}
-
-
-
-// DCDC1 85% low voltage turn off PMIC function
-void AXP192::setDC1LowVoltagePowerDown(bool en)
-{
-    en ? setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 0) : clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 0);
-}
-
-bool AXP192::getDC1LowVoltagePowerDownEn(){ return getRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 0); }
-
-/*
- * Power control DCDC2 functions
- */
-bool AXP192::isEnableDC2(void){ return getRegisterBit(XPOWERS_AXP192_DC2_ONOFF_DVM_CTRL, 0); } //was 1
-
-bool AXP192::enableDC2(void){ return setRegisterBit(XPOWERS_AXP192_DC2_ONOFF_DVM_CTRL, 0); } //was 1
-
-bool AXP192::disableDC2(void){ return clrRegisterBit(XPOWERS_AXP192_DC2_ONOFF_DVM_CTRL, 0); } //was 1
-
-bool AXP192::setDC2Voltage(uint16_t millivolt)
-{
-    int val = readRegister(XPOWERS_AXP192_DC_VOL1_CTRL);
-    if (val == -1)return 0;
-    val &= 0xC0; //was 0x80
-    if (millivolt >= XPOWERS_AXP192_DCDC2_VOL1_MIN && millivolt <= XPOWERS_AXP192_DCDC2_VOL1_MAX) {
-        if (millivolt % XPOWERS_AXP192_DCDC2_VOL_STEPS1) {
-            ESP_LOGE(TAG, "Mistake !  The steps must be %umV", XPOWERS_AXP192_DCDC2_VOL_STEPS1);
-            return false;
-        }
-        return  0 == writeRegister(XPOWERS_AXP192_DC_VOL1_CTRL, val | (millivolt - XPOWERS_AXP192_DCDC2_VOL1_MIN) / XPOWERS_AXP192_DCDC2_VOL_STEPS1);
-    } else if (millivolt >= XPOWERS_AXP192_DCDC2_VOL2_MIN && millivolt <= XPOWERS_AXP192_DCDC2_VOL2_MAX) {
-        if (millivolt % XPOWERS_AXP192_DCDC2_VOL_STEPS2) {
-            ESP_LOGE(TAG, "Mistake !  The steps must be %umV", XPOWERS_AXP192_DCDC2_VOL_STEPS2);
-            return false;
-        }
-        val |= (((millivolt - XPOWERS_AXP192_DCDC2_VOL2_MIN) / XPOWERS_AXP192_DCDC2_VOL_STEPS2) + XPOWERS_AXP192_DCDC2_VOL_STEPS2_BASE);
-        return  0 == writeRegister(XPOWERS_AXP192_DC_VOL1_CTRL, val);
-    }
-    return false;
-}
-
-uint16_t AXP192::getDC2Voltage(void)
-{
-    int val = readRegister(XPOWERS_AXP192_DC_VOL1_CTRL);
-    if (val ==  -1)return 0;
-    val &= 0x3F; //was 0x7F
-    if (val < XPOWERS_AXP192_DCDC2_VOL_STEPS2_BASE) {
-        return (val  * XPOWERS_AXP192_DCDC2_VOL_STEPS1) +  XPOWERS_AXP192_DCDC2_VOL1_MIN;
-    } else  {
-        return (val  * XPOWERS_AXP192_DCDC2_VOL_STEPS2) - 200;
-    }
-    return 0;
-}
-
-uint8_t AXP192::getDC2WorkMode(void){ return getRegisterBit(XPOWERS_AXP192_DCDC2_VOL_STEPS2, 7); }
-
-void AXP192::setDC2LowVoltagePowerDown(bool en){
-    en ? setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 1) : clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 1);
-}
-
-bool AXP192::getDC2LowVoltagePowerDownEn(){ return getRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 1); }
-
-/*
- * Power control DCDC3 functions
- */
-
-bool AXP192::isEnableDC3(void){ return getRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 1); } //was bit 2
-
-bool AXP192::enableDC3(void){ return setRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 1); } //was bit 2
-
-bool AXP192::disableDC3(void){ return clrRegisterBit(XPOWERS_AXP192_DC_ONOFF_DVM_CTRL, 1); } //was bit 2
-
-/**
-    0.5~1.2V,10mV/step,71steps
-    1.22~1.54V,20mV/step,17steps
-    1.6~3.4V,100mV/step,19steps
- */
-bool AXP192::setDC3Voltage(uint16_t millivolt)
-{
-    int val = readRegister(XPOWERS_AXP192_DC_VOL2_CTRL);
-    if (val == -1)return false;
-    val &= 0x80;
-    if (millivolt >= XPOWERS_AXP192_DCDC3_VOL_MIN && millivolt <= XPOWERS_AXP192_DCDC3_VOL_MAX) {
-        // if (millivolt % XPOWERS_AXP192_DCDC3_VOL_STEPS) {
-        //     ESP_LOGE(TAG, "Mistake ! The steps must be %umV", XPOWERS_AXP192_DCDC3_VOL_STEPS);
-        //     return false;
-        // }
-        val |= (((millivolt - XPOWERS_AXP192_DCDC3_VOL_MIN) / XPOWERS_AXP192_DCDC3_VOL_STEPS) + XPOWERS_AXP192_DCDC3_VOL_STEPS_BASE);
-ESP_LOGCONFIG(TAG, "millivolt %u, val %u", millivolt, val);
-        return  0 == writeRegister(XPOWERS_AXP192_DC_VOL2_CTRL, val);
-    }
-    return false;
-}
-
-
-uint16_t AXP192::getDC3Voltage(void)
-{
-    int val = readRegister(XPOWERS_AXP192_DC_VOL2_CTRL) & 0x7F;
-    if (val == -1) {
-        return 0;
-    } else {
-        return ((val & 0x7F)  * XPOWERS_AXP192_DCDC3_VOL_STEPS) +  XPOWERS_AXP192_DCDC3_VOL_MIN;
-    }
-}
-
-uint8_t AXP192::getDC3WorkMode(void){ return getRegisterBit(XPOWERS_AXP192_DC_VOL2_CTRL, 7); }
-
-// DCDC3 85% low voltage turn off PMIC function
-void AXP192::setDC3LowVoltagePowerDown(bool en)
-{
-    en ? setRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 2) : clrRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 2);
-}
-
-bool AXP192::getDC3LowVoltagePowerDownEn(){ return getRegisterBit(XPOWERS_AXP192_DC_OVP_UVP_CTRL, 2); }
-
-/*
-* Power control ALDO1 functions
-*/
-bool AXP192::isEnableALDO1(void){ return getRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 0); }
-
-bool AXP192::enableALDO1(void){ return setRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 0); }
-
-bool AXP192::disableALDO1(void){ return clrRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 0); }
-
-bool AXP192::setALDO1Voltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_ALDO1_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_ALDO1_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_ALDO1_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! ALDO1 minimum output voltage is  %umV", XPOWERS_AXP192_ALDO1_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_ALDO1_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! ALDO1 maximum output voltage is  %umV", XPOWERS_AXP192_ALDO1_VOL_MAX);
-        return false;
-    }
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL0_CTRL) & 0xE0;
-    val |= (millivolt - XPOWERS_AXP192_ALDO1_VOL_MIN) / XPOWERS_AXP192_ALDO1_VOL_STEPS;
-    return 0 == writeRegister(XPOWERS_AXP192_LDO_VOL0_CTRL, val);
-}
-
-uint16_t AXP192::getALDO1Voltage(void)
-{
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL0_CTRL) & 0x1F;
-    return val * XPOWERS_AXP192_ALDO1_VOL_STEPS + XPOWERS_AXP192_ALDO1_VOL_MIN;
-}
-
-/*
-* Power control ALDO2 functions
-*/
-bool AXP192::isEnableALDO2(void){ return getRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 1); }
-
-bool AXP192::enableALDO2(void){ return setRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 1); }
-
-bool AXP192::disableALDO2(void){ return clrRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 1); }
-
-bool AXP192::setALDO2Voltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_ALDO2_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_ALDO2_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_ALDO2_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! ALDO2 minimum output voltage is  %umV", XPOWERS_AXP192_ALDO2_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_ALDO2_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! ALDO2 maximum output voltage is  %umV", XPOWERS_AXP192_ALDO2_VOL_MAX);
-        return false;
-    }
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL1_CTRL) & 0xE0;
-    val |= (millivolt - XPOWERS_AXP192_ALDO2_VOL_MIN) / XPOWERS_AXP192_ALDO2_VOL_STEPS;
-    return 0 == writeRegister(XPOWERS_AXP192_LDO_VOL1_CTRL, val);
-}
-
-uint16_t AXP192::getALDO2Voltage(void)
-{
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL1_CTRL) & 0x1F;
-    return val * XPOWERS_AXP192_ALDO2_VOL_STEPS + XPOWERS_AXP192_ALDO2_VOL_MIN;
-}
-
-/*
- * Power control ALDO3 functions
- */
-bool AXP192::isEnableALDO3(void){ return getRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 2); }
-
-bool AXP192::enableALDO3(void){ return setRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 2); }
-
-bool AXP192::disableALDO3(void){ return clrRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 2); }
-
-bool AXP192::setALDO3Voltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_ALDO3_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_ALDO3_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_ALDO3_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! ALDO3 minimum output voltage is  %umV", XPOWERS_AXP192_ALDO3_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_ALDO3_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! ALDO3 maximum output voltage is  %umV", XPOWERS_AXP192_ALDO3_VOL_MAX);
-        return false;
-    }
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL2_CTRL) & 0xE0;
-    val |= (millivolt - XPOWERS_AXP192_ALDO3_VOL_MIN) / XPOWERS_AXP192_ALDO3_VOL_STEPS;
-    return 0 == writeRegister(XPOWERS_AXP192_LDO_VOL2_CTRL, val);
-}
-
-uint16_t AXP192::getALDO3Voltage(void)
-{
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL2_CTRL) & 0x1F;
-    return val * XPOWERS_AXP192_ALDO3_VOL_STEPS + XPOWERS_AXP192_ALDO3_VOL_MIN;
-}
-
-/*
- * Power control ALDO4 functions
- */
-bool AXP192::isEnableALDO4(void){ return getRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 3); }
-
-bool AXP192::enableALDO4(void){ return setRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 3); }
-
-bool AXP192::disableALDO4(void){ return clrRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 3); }
-
-bool AXP192::setALDO4Voltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_ALDO4_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_ALDO4_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_ALDO4_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! ALDO4 minimum output voltage is  %umV", XPOWERS_AXP192_ALDO4_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_ALDO4_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! ALDO4 maximum output voltage is  %umV", XPOWERS_AXP192_ALDO4_VOL_MAX);
-        return false;
-    }
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL3_CTRL) & 0xE0;
-    val |= (millivolt - XPOWERS_AXP192_ALDO4_VOL_MIN) / XPOWERS_AXP192_ALDO4_VOL_STEPS;
-    return 0 == writeRegister(XPOWERS_AXP192_LDO_VOL3_CTRL, val);
-}
-
-uint16_t AXP192::getALDO4Voltage(void)
-{
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL3_CTRL) & 0x1F;
-    return val * XPOWERS_AXP192_ALDO4_VOL_STEPS + XPOWERS_AXP192_ALDO4_VOL_MIN;
-}
-
-
-/*
-* Power control DLDO3 functions (Vibration Motor)
-*/
-bool AXP192::isEnableDLDO3(void){ return getRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 3); } //was 7
-
-bool AXP192::enableDLDO3(void){ return setRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 3); } //was 7
-
-bool AXP192::disableDLDO3(void){ return clrRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 3); } //was 7
-
-bool AXP192::setDLDO3Voltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_DLDO3_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_DLDO3_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_DLDO3_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! DLDO3 minimum output voltage is  %umV", XPOWERS_AXP192_DLDO3_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_DLDO3_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! DLDO3 maximum output voltage is  %umV", XPOWERS_AXP192_DLDO3_VOL_MAX);
-        return false;
-    }
-    uint16_t val = readRegister(XPOWERS_AXP192_LDO_VOL7_CTRL) & 0xF0;
-    val |= (millivolt - XPOWERS_AXP192_DLDO3_VOL_MIN) / XPOWERS_AXP192_DLDO3_VOL_STEPS;
-ESP_LOGCONFIG(TAG, "DLD03 millivolt %u, val %u %02X", millivolt, val, val);
-    return 0 == writeRegister(XPOWERS_AXP192_LDO_VOL7_CTRL, val);
-}
-
-uint16_t AXP192::getDLDO3Voltage(void)
-{
-    int val = readRegister(XPOWERS_AXP192_LDO_VOL7_CTRL);
-    if (val == -1)return 0;
-    val &= 0x0F;
-    return val * XPOWERS_AXP192_DLDO3_VOL_STEPS + XPOWERS_AXP192_DLDO3_VOL_MIN;
-}
-
-/*
-* Power control DLDO2 functions (Perif VDD, Display VDD)
-*/
-bool AXP192::isEnableDLDO2(void){ return getRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 2); } //LDO2
-
-bool AXP192::enableDLDO2(void){ return setRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 2); }
-
-bool AXP192::disableDLDO2(void){ return clrRegisterBit(XPOWERS_AXP192_LDO_ONOFF_CTRL0, 2); }
-
-bool AXP192::setDLDO2Voltage(uint16_t millivolt)
-{
-    if (millivolt % XPOWERS_AXP192_DLDO2_VOL_STEPS) {
-        ESP_LOGE(TAG, "Mistake ! The steps must be %u mV", XPOWERS_AXP192_DLDO2_VOL_STEPS);
-        return false;
-    }
-    if (millivolt < XPOWERS_AXP192_DLDO2_VOL_MIN) {
-        ESP_LOGE(TAG, "Mistake ! DLDO2 minimum output voltage is  %umV", XPOWERS_AXP192_DLDO2_VOL_MIN);
-        return false;
-    } else if (millivolt > XPOWERS_AXP192_DLDO2_VOL_MAX) {
-        ESP_LOGE(TAG, "Mistake ! DLDO2 maximum output voltage is  %umV", XPOWERS_AXP192_DLDO2_VOL_MAX);
-        return false;
-    }
-    uint16_t val =  readRegister(XPOWERS_AXP192_LDO_VOL8_CTRL) & 0x0F; //was 0xE0
-    val |= (((millivolt - XPOWERS_AXP192_DLDO2_VOL_MIN) / XPOWERS_AXP192_DLDO2_VOL_STEPS)<<4);
-ESP_LOGCONFIG(TAG, "DLD02 millivolt %u, val %u %02X", millivolt, val, val);
-    return 0 == writeRegister(XPOWERS_AXP192_LDO_VOL8_CTRL, val);
-}
-
-uint16_t AXP192::getDLDO2Voltage(void)
-{
-    int val =  readRegister(XPOWERS_AXP192_LDO_VOL8_CTRL);
-    if (val == -1)return 0;
-    val &= 0xF0; //was 0x1F
-    return (val>>4) * XPOWERS_AXP192_DLDO2_VOL_STEPS + XPOWERS_AXP192_DLDO2_VOL_MIN;
-}
-
-
-/*
- * Power ON OFF IRQ TIMMING Control method
- */
-
-void AXP192::setIrqLevelTime(xpowers_irq_time_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL);
-    if (val == -1)return;
-    val &= 0xCF;
-    writeRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL, val | (opt << 4));
-}
-
-xpowers_irq_time_t AXP192::getIrqLevelTime(void)
-{
-    return (xpowers_irq_time_t)((readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL) & 0x30) >> 4);
-}
-
-/**
-* @brief Set the PEKEY power-on long press time.
-* @param opt: See xpowers_press_on_time_t enum for details.
-* @retval
-*/
-bool AXP192::setPowerKeyPressOnTime(uint8_t opt) //updated
-{
-    int val = readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL);
-    if (val == -1)return false;
-    val  &= 0x3F;
-    return 0 ==  writeRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL, val | (opt << 6));
-}
-
-/**
-* @brief Get the PEKEY power-on long press time.
-* @retval See xpowers_press_on_time_t enum for details.
-*/
-uint8_t AXP192::getPowerKeyPressOnTime(void) //updated
-{
-    int val =  readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL);
-    if (val == -1)return 0;
-    return ((val & 0xC0) >> 6) ;
-}
-
-/**
-* @brief Set the PEKEY power-off long press time.
-* @param opt: See xpowers_press_off_time_t enum for details.
-* @retval
-*/
-bool AXP192::setPowerKeyPressOffTime(uint8_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL);
-    if (val == -1)return false;
-    val  &= 0xFC; //was 0xF3
-    return 0 == writeRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL, val | (opt ));
-}
-
-/**
-* @brief Get the PEKEY power-off long press time.
-* @retval See xpowers_press_off_time_t enum for details.
-*/
-uint8_t AXP192::getPowerKeyPressOffTime(void) //updated
-{
-    return ((readRegister(XPOWERS_AXP192_IRQ_OFF_ON_LEVEL_CTRL) & 0x03) );
-}
-
-/*
- * ADC Control method
- */
-//All this code not reqd, remove
-bool AXP192::enableGeneralAdcChannel(void){ return setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 3); } // GPIO0 ADC, GPIO1, 2, 3 also available but not coded
-
-bool AXP192::disableGeneralAdcChannel(void){ return clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 3); }
-
-bool AXP192::enableTemperatureMeasure(void){ return setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 7); } //was bit 4
-
-bool AXP192::disableTemperatureMeasure(void){ return clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 7); }
-
-float AXP192::getTemperature(void)
-{
-    uint16_t raw = readRegisterH6L8(XPOWERS_AXP192_ADC_DATA_RELUST8, XPOWERS_AXP192_ADC_DATA_RELUST9);
-    return XPOWERS_AXP192_CONVERSION(raw);
-}
-
-bool AXP192::enableSystemVoltageMeasure(void){ return setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 5); } //was bit 3, assumes ACIN is sytem voltage - actually USB voltage
-
-bool AXP192::disableSystemVoltageMeasure(void){ return clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 5); }
-
-uint16_t AXP192::getSystemVoltage(void)
-{
-    return readRegisterH6L8(XPOWERS_AXP192_ADC_DATA_RELUST6, XPOWERS_AXP192_ADC_DATA_RELUST7);
-}
-
-bool AXP192::enableVbusVoltageMeasure(void){ return setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 3); } //was bit 2
-
-bool AXP192::disableVbusVoltageMeasure(void){ return clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 3); }
-//end of code remove block
-
-bool AXP192::configureAdcMeasure(void){
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 7);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 6);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 5);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 4);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 3);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 2);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 1);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 0);
-    setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 7);
-    clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 3);
-    clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 2);
-    clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 1);
-    return clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL2, 0);
-}
-
-float AXP192::getACINVoltage(void)
-{
-    // if (!isBatteryConnect()) {
-    //     return 0;
-    // }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_ACINVH, XPOWERS_AXP192_ADC_DATA_ACINVL)*XPOWERS_AXP192_ADC_SCALE_ACINV/1000.0;
-}
-
-float AXP192::getACINCurrent(void)
-{
-    // if (!isBatteryConnect()) {
-    //     return 0;
-    // }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_ACINIH, XPOWERS_AXP192_ADC_DATA_ACINIL)*XPOWERS_AXP192_ADC_SCALE_ACINI/1000.0;
-}
-
-float AXP192::getVBUSVoltage(void)
-{
-    // if (!isBatteryConnect()) {
-    //     return 0;
-    // }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_VBUSVH, XPOWERS_AXP192_ADC_DATA_VBUSVL)*XPOWERS_AXP192_ADC_SCALE_VBUSV/1000.0;
-}
-
-float AXP192::getVBUSCurrent(void)
-{
-    // if (!isBatteryConnect()) {
-    //     return 0;
-    // }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_VBUSIH, XPOWERS_AXP192_ADC_DATA_VBUSIL)*XPOWERS_AXP192_ADC_SCALE_VBUSI/1000.0;
-}
-
-float AXP192::getInternalTemperature(void)
-{
-    return (readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_INTTH, XPOWERS_AXP192_ADC_DATA_INTTL)*XPOWERS_AXP192_ADC_SCALE_INTT)+XPOWERS_AXP192_ADC_OFFSET_INTT;
-}
-
-float AXP192::getBattPower(void)
-{
-    return readRegisterH8M8L8(XPOWERS_AXP192_ADC_DATA_BATTPH, XPOWERS_AXP192_ADC_DATA_BATTPM, XPOWERS_AXP192_ADC_DATA_BATTPL)/1000000.0;
-}
-
-float AXP192::getBattChargeCurrent(void)
-{
-    // if (!isBatteryConnect()) {
-    //     return 0;
-    // }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_BATTCHGH, XPOWERS_AXP192_ADC_DATA_BATTCHGL)*XPOWERS_AXP192_ADC_SCALE_BATTCHGI/1000.0;
-}
-
-float AXP192::getBattDischargeCurrent(void)
-{
-    // if (!isBatteryConnect()) {
-    //     return 0;
-    // }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_BATTDCHGH, XPOWERS_AXP192_ADC_DATA_BATTDCHGL)*XPOWERS_AXP192_ADC_SCALE_BATTCHGI/1000.0;
-}
-
-float AXP192::getAPSVoltage(void)
-{
-    // if (!isBatteryConnect()) {
-    //     return 0;
-    // }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_APSVH, XPOWERS_AXP192_ADC_DATA_APSVL)*XPOWERS_AXP192_ADC_SCALE_APSV/1000.0;
-}
-
-
-
-
-
-// old code remove when possible
-bool AXP192::enableTSPinMeasure(void) //updated
-{
-    // TS pin is the battery temperature sensor input and will affect the charger
-    uint8_t value =  readRegister(XPOWERS_AXP192_TS_PIN_CTRL);
-    value &= 0xD0; //was 0xE0
-    writeRegister(XPOWERS_AXP192_TS_PIN_CTRL, value | 0x26); //was 0x07
-    return setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 0); //was bit 1
-}
-
-bool AXP192::disableTSPinMeasure(void) //updated
-{
-    // TS pin is the external fixed input and doesn't affect the charger
-    uint8_t value =  readRegister(XPOWERS_AXP192_TS_PIN_CTRL);
-    value &= 0xD0; //was 0xF0
-    writeRegister(XPOWERS_AXP192_TS_PIN_CTRL, value | 0x00); //was 0x10
-    return clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 0); //was bit 1
-}
-
-
-bool AXP192::enableTSPinLowFreqSample(void){ return setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 0); } //was bit 7
-
-bool AXP192::disableTSPinLowFreqSample(void){ return clrRegisterBit(XPOWERS_AXP192_ADC_DATA_RELUST2, 7); }
-
-
-/**
- * Calculate temperature from TS pin ADC value using Steinhart-Hart equation.
- *
- * @param SteinhartA Steinhart-Hart coefficient A (default: 1.126e-3)
- * @param SteinhartB Steinhart-Hart coefficient B (default: 2.38e-4)
- * @param SteinhartC Steinhart-Hart coefficient C (default: 8.5e-8)
- * @return Temperature in Celsius. Returns 0 if ADC value is 0x2000 (invalid measurement).
- *
- * @details
- * This function converts the ADC reading from the TS pin to temperature using:
- * 1. Voltage calculation: V = ADC_raw × 0.0005 (V)
- * 2. Resistance calculation: R = V / I (Ω), where I = 50μA
- * 3. Temperature calculation: T = 1/(A+B*ln(R)+C*(ln(R))^3) - 273.15 (℃)
- *
- * @note
- * The calculation parameters are from the AXP192 Datasheet, using the TH11-3H103F NTC resistor
- *     as the Steinhart-Hart equation calculation parameters
- * 1. Coefficients A, B, C should be calibrated for specific NTC thermistor.
- * 2. ADC value 0x2000 indicates sensor fault (e.g., open circuit).
- * 3. Valid temperature range: typically -20℃ to 60℃. Accuracy may degrade outside this range.
- */
-float AXP192::getTsTemperature(float SteinhartA,
-                       float SteinhartB,
-                       float SteinhartC)
-{
-    uint16_t  adc_raw =  getTsPinValue();  // Read raw ADC value from TS pin
-
-    // Check for invalid measurement (0x2000 indicates sensor disconnection)
-    if (adc_raw == 0x2000) {
-        return 0;
-    }
-    float current_ma = 0.05f;  // Current source: 50μA
-    float voltage = adc_raw * 0.0005f;  // Convert ADC value to voltage (V)
-    float resistance = voltage / (current_ma / 1000.0f);  // Calculate resistance (Ω)
-    // Convert resistance to temperature using Steinhart-Hart equation
-    return resistance_to_temperature(resistance, SteinhartA, SteinhartB, SteinhartC);
-}
-
-// raw value
-uint16_t AXP192::getTsPinValue(void)
-{
-    return readRegisterH6L8(XPOWERS_AXP192_ADC_DATA_RELUST2, XPOWERS_AXP192_ADC_DATA_RELUST3);
-}
-
-bool AXP192::enableBattVoltageMeasure(void){ return setRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 7); } //was 0
-
-bool AXP192::disableBattVoltageMeasure(void){ return clrRegisterBit(XPOWERS_AXP192_ADC_CHANNEL_CTRL1, 7); }
-
-bool AXP192::enableBattDetection(void){ return setRegisterBit(XPOWERS_AXP192_BAT_DET_CTRL, 6); } //was 0
-
-bool AXP192::disableBattDetection(void){ return clrRegisterBit(XPOWERS_AXP192_BAT_DET_CTRL, 6); } //was 0
-
-float AXP192::getBattVoltage(void)
-{
-    if (!isBatteryConnect()) {
-        return 0;
-    }
-    return readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_BATTVH, XPOWERS_AXP192_ADC_DATA_BATTVL)/1000.0;
-}
-
-int AXP192::getBatteryPercent(void)
-{
-    if (!isBatteryConnect()) {
-        return -1; // Battery not connected so Percent not available
-    }
-    // No simple register so we read battery voltage and estimate % charge from that
-    uint16_t batteryVoltage = readRegisterH8L4(XPOWERS_AXP192_ADC_DATA_BATTVH, XPOWERS_AXP192_ADC_DATA_BATTVL);
-    int batteryPercent = ((batteryVoltage - 3200)*100)/(3670 - 3200);
-ESP_LOGD(TAG, "BattVoltage %u mV, %% %u", batteryVoltage, batteryPercent);
-
-    if (batteryVoltage > 3670) return 100; //Consider fully charged, should also check that charging is off
-    return batteryPercent;
-}
-
-int AXP192::getScaledBatteryPercent(uint16_t discharge_0pc_voltage, uint16_t discharge_100pc_voltage, uint16_t charge_0pc_current, uint16_t charge_100pc_current)
-{
-    int batteryPercent = 0;
-    if (!isBatteryConnect()) {
-        return -1; // Battery not connected so Percent not available
-    }
-    // No simple register so we read battery voltage and estimate % charge from that
-    uint16_t batteryVoltage = 1000.0*getBattVoltage(); //mV
-    uint16_t batteryChargeCurrent = 1000.0*getBattChargeCurrent(); //mA
-    if (isCharging()) {
-        // Use charging current as indicator of state of charge
-        if (batteryChargeCurrent <= charge_100pc_current){
-            batteryPercent = 100;
-        } else {
-            if (batteryChargeCurrent >= charge_0pc_current){
-                batteryPercent = 0;
-            } else {
-                batteryPercent = ((charge_0pc_current - batteryChargeCurrent)*100)/(charge_0pc_current - charge_100pc_current);
-            }
-        }
-    } else {
-        if (batteryVoltage >= discharge_100pc_voltage) {
-            batteryPercent = 100; //Consider fully charged, should also check that charging is off
-        } else {
-            if (batteryVoltage <= discharge_0pc_voltage) {
-                batteryPercent = 0;
-            } else {
-                batteryPercent = ((batteryVoltage - discharge_0pc_voltage)*100)/(discharge_100pc_voltage - discharge_0pc_voltage);
-            }
-        }
-    }
-
-    return batteryPercent;
-}
-
-/*
-* CHG LED setting and control
-*/
-// void AXP192::enableChargingLed(void)
-// {
-//     setRegisterBit(XPOWERS_AXP192_CHGLED_SET_CTRL, 0);
-// }
-
-// void AXP192::disableChargingLed(void)
-// {
-//     clrRegisterBit(XPOWERS_AXP192_CHGLED_SET_CTRL, 0);
-// }
-
-/**
-* @brief Set charging led mode. (actually not used in Core2 unit)
-* @retval See xpowers_chg_led_mode_t enum for details.
-*/
-void AXP192::setChargingLedMode(uint8_t mode)
-{
-    int val;
-    switch (mode) {
-    case XPOWERS_CHG_LED_OFF:
-    // clrRegisterBit(XPOWERS_AXP192_CHGLED_SET_CTRL, 0);
-    // break;
-    case XPOWERS_CHG_LED_BLINK_1HZ:
-    case XPOWERS_CHG_LED_BLINK_4HZ:
-    case XPOWERS_CHG_LED_ON:
-        val = readRegister(XPOWERS_AXP192_CHGLED_SET_CTRL);
-        if (val == -1)return;
-        val &= 0xC7; //was 0xC8
-        val |= 0x08;    //use manual ctrl was 0x05
-        val |= (mode << 4);
-        // in AXP192 just set GPIO1 as an output
-        writeRegister(XPOWERS_AXP192_CHGLED_SET_CTRL, val);
-        break;
-    case XPOWERS_CHG_LED_CTRL_CHG:
-        val = readRegister(XPOWERS_AXP192_CHGLED_SET_CTRL);
-        if (val == -1)return;
-        val &= 0xC7; //was F9
-        val |= 0x00; //clear bit 3
-        // writeRegister(XPOWERS_AXP192_CHGLED_SET_CTRL, val | 0x01); // use type A mode
-        // writeRegister(XPOWERS_AXP192_CHGLED_SET_CTRL, val | 0x02); // use type B mode
-        // in AXP192 just set GPIO1 as an output
-        writeRegister(XPOWERS_AXP192_CHGLED_SET_CTRL, val);
-        break;
+// --- ADC, 9.7 and 9.11 ADC data registers ----------------------------------
+// `lsb` is expressed in the unit the entity publishes, so the voltage channels
+// use volts per count rather than the datasheet's millivolts per count. The
+// battery, ACIN, VBUS, temperature, TS, APS and GPIO channels are 12 bits in a
+// high 8 bit register plus the bottom 4 bits of the next one; the charge and
+// discharge currents are 13 bits, so their low part uses the bottom 5 bits.
+//
+// The GPIO channels are listed for completeness and are readable through
+// read_adc(), but they are not exposed as sensors: measuring one needs the pin
+// switched to the ADC function, which the pin platform owns.
+
+constexpr AxpAdcChannel ADC_CHANNELS[] = {
+    {.name = "battery_voltage",
+     .lsb = 0.0011f,  // 1.1 mV/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 7,
+     .hi_reg = 0x78,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x79,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "battery_charge_current",
+     .lsb = 0.0005f,  // 0.5 mA/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 6,
+     .hi_reg = 0x7A,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x7B,
+     .lo_mask = 0x1F,
+     .lo_bits = 5,
+     .lo_shift = 0},
+    // The charge and discharge currents share one enable bit, which is what the
+    // chip offers; switching either channel on switches both.
+    {.name = "battery_discharge_current",
+     .lsb = 0.0005f,  // 0.5 mA/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 6,
+     .hi_reg = 0x7C,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x7D,
+     .lo_mask = 0x1F,
+     .lo_bits = 5,
+     .lo_shift = 0},
+    // Pbat = raw * 1.1 mV * 0.5 mA / 1000, published in watts so the entity uses
+    // the same unit as any other power sensor: 1.1 * 0.5 / 1000 / 1000 W per
+    // count. Power needs the voltage and current converters; only the current
+    // one is off by default.
+    {.name = "battery_power",
+     .lsb = 0.00000055f,
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 6,
+     .hi_reg = 0x70,
+     .hi_mask = 0xFF,
+     .mid_reg = 0x71,
+     .lo_reg = 0x72,
+     .lo_mask = 0xFF,
+     .lo_bits = 8,
+     .lo_shift = 0},
+    {.name = "acin_voltage",
+     .lsb = 0.0017f,  // 1.7 mV/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 5,
+     .hi_reg = 0x56,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x57,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "acin_current",
+     .lsb = 0.000625f,  // 0.625 mA/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 4,
+     .hi_reg = 0x58,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x59,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "vbus_voltage",
+     .lsb = 0.0017f,  // 1.7 mV/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 3,
+     .hi_reg = 0x5A,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x5B,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "vbus_current",
+     .lsb = 0.000375f,  // 0.375 mA/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 2,
+     .hi_reg = 0x5C,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x5D,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "aps_voltage",
+     .lsb = 0.0014f,  // 1.4 mV/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 1,
+     .hi_reg = 0x7E,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x7F,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "ts_voltage",
+     .lsb = 0.0008f,  // 0.8 mV/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x82,
+     .enable_bit = 0,
+     .hi_reg = 0x62,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x63,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    // 0.1 C per count starting at -144.7 C, which is the datasheet's own table.
+    {.name = "die_temperature",
+     .lsb = 0.1f,
+     .offset = -144.7f,
+     .enable_reg = 0x83,
+     .enable_bit = 7,
+     .hi_reg = 0x5E,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x5F,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    // GPIO0-3 measure 0-2.0475 V or 0.7-2.7475 V, selected per pin in REG 85H.
+    // The table holds the power-on setting, which is the 0 V floor for all four.
+    {.name = "gpio0_voltage",
+     .lsb = 0.0005f,  // 0.5 mV/LSB
+     .offset = 0.0f,
+     .enable_reg = 0x83,
+     .enable_bit = 3,
+     .hi_reg = 0x64,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x65,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "gpio1_voltage",
+     .lsb = 0.0005f,
+     .offset = 0.0f,
+     .enable_reg = 0x83,
+     .enable_bit = 2,
+     .hi_reg = 0x66,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x67,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "gpio2_voltage",
+     .lsb = 0.0005f,
+     .offset = 0.0f,
+     .enable_reg = 0x83,
+     .enable_bit = 1,
+     .hi_reg = 0x68,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x69,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+    {.name = "gpio3_voltage",
+     .lsb = 0.0005f,
+     .offset = 0.0f,
+     .enable_reg = 0x83,
+     .enable_bit = 0,
+     .hi_reg = 0x6A,
+     .hi_mask = 0xFF,
+     .mid_reg = axp_base::AXP_REG_NONE,
+     .lo_reg = 0x6B,
+     .lo_mask = 0x0F,
+     .lo_bits = 4,
+     .lo_shift = 0},
+};
+
+// --- Status flags, REG 00H and REG 01H ------------------------------------
+// The name doubles as the configuration key. REG 04H (OTG VBUS session status)
+// is not cached: the hub reads one contiguous block and 04H does not join 00H
+// and 01H, so those three bits are left to the vbus_* events.
+
+constexpr AxpStatusFlag STATUS_FLAGS[] = {
+    {"acin_present", {0, 0x80, 0x80}},
+    {"acin_good", {0, 0x40, 0x40}},
+    {"vbus_present", {0, 0x20, 0x20}},
+    {"vbus_good", {0, 0x10, 0x10}},
+    {"vbus_above_vhold", {0, 0x08, 0x08}},
+    // REG 00H bit 2 is the current direction, not a charging flag: 1 while the
+    // battery takes current, 0 while it supplies the system.
+    {"battery_charging", {1, 0x40, 0x40}},
+    {"battery_discharging", {0, 0x04, 0x00}},
+    {"acin_vbus_shorted", {0, 0x02, 0x02}},
+    {"boot_from_acin_vbus", {0, 0x01, 0x01}},
+    {"over_temperature", {1, 0x80, 0x80}},
+    {"battery_present", {1, 0x20, 0x20}},
+    {"battery_active_mode", {1, 0x08, 0x08}},
+    {"charge_current_limited", {1, 0x04, 0x04}},
+    {"power_on_mode_b", {1, 0x02, 0x02}},
+};
+
+// --- Interrupt sources, REG 44H to REG 47H --------------------------------
+// Status registers are REG 44H-47H and enables are REG 40H-43H, so the enable
+// index always equals the status index. REG 4DH (IRQ5: the internal timer and
+// the GPIO0-2 edge detectors) is not modelled because it does not join that
+// block; the timer and the pin edges are described in the README instead.
+
+constexpr AxpEvent EVENTS[] = {
+    {.name = "acin_over_voltage", .status_index = 0, .bit = 7, .enable_index = 0, .enable_bit = 7},
+    {.name = "acin_insert", .status_index = 0, .bit = 6, .enable_index = 0, .enable_bit = 6},
+    {.name = "acin_remove", .status_index = 0, .bit = 5, .enable_index = 0, .enable_bit = 5},
+    {.name = "vbus_over_voltage", .status_index = 0, .bit = 4, .enable_index = 0, .enable_bit = 4},
+    {.name = "vbus_insert", .status_index = 0, .bit = 3, .enable_index = 0, .enable_bit = 3},
+    {.name = "vbus_remove", .status_index = 0, .bit = 2, .enable_index = 0, .enable_bit = 2},
+    {.name = "vbus_below_vhold", .status_index = 0, .bit = 1, .enable_index = 0, .enable_bit = 1},
+    {.name = "battery_insert", .status_index = 1, .bit = 7, .enable_index = 1, .enable_bit = 7},
+    {.name = "battery_remove", .status_index = 1, .bit = 6, .enable_index = 1, .enable_bit = 6},
+    {.name = "battery_enter_active_mode", .status_index = 1, .bit = 5, .enable_index = 1, .enable_bit = 5},
+    {.name = "battery_exit_active_mode", .status_index = 1, .bit = 4, .enable_index = 1, .enable_bit = 4},
+    {.name = "battery_charge_started", .status_index = 1, .bit = 3, .enable_index = 1, .enable_bit = 3},
+    {.name = "battery_charge_done", .status_index = 1, .bit = 2, .enable_index = 1, .enable_bit = 2},
+    {.name = "battery_over_temperature", .status_index = 1, .bit = 1, .enable_index = 1, .enable_bit = 1},
+    {.name = "battery_under_temperature", .status_index = 1, .bit = 0, .enable_index = 1, .enable_bit = 0},
+    {.name = "die_over_temperature", .status_index = 2, .bit = 7, .enable_index = 2, .enable_bit = 7},
+    {.name = "charge_current_below_setting", .status_index = 2, .bit = 6, .enable_index = 2, .enable_bit = 6},
+    {.name = "dcdc1_under_voltage", .status_index = 2, .bit = 5, .enable_index = 2, .enable_bit = 5},
+    {.name = "dcdc2_under_voltage", .status_index = 2, .bit = 4, .enable_index = 2, .enable_bit = 4},
+    {.name = "dcdc3_under_voltage", .status_index = 2, .bit = 3, .enable_index = 2, .enable_bit = 3},
+    {.name = "power_key_short_press", .status_index = 2, .bit = 1, .enable_index = 2, .enable_bit = 1},
+    {.name = "power_key_long_press", .status_index = 2, .bit = 0, .enable_index = 2, .enable_bit = 0},
+    {.name = "n_oe_power_on", .status_index = 3, .bit = 7, .enable_index = 3, .enable_bit = 7},
+    {.name = "n_oe_power_off", .status_index = 3, .bit = 6, .enable_index = 3, .enable_bit = 6},
+    {.name = "vbus_valid", .status_index = 3, .bit = 5, .enable_index = 3, .enable_bit = 5},
+    {.name = "vbus_invalid", .status_index = 3, .bit = 4, .enable_index = 3, .enable_bit = 4},
+    {.name = "vbus_session_valid", .status_index = 3, .bit = 3, .enable_index = 3, .enable_bit = 3},
+    {.name = "vbus_session_end", .status_index = 3, .bit = 2, .enable_index = 3, .enable_bit = 2},
+    {.name = "aps_low_voltage", .status_index = 3, .bit = 0, .enable_index = 3, .enable_bit = 0},
+};
+
+// --- Charger, REG 30H/33H/34H/35H/8BH -------------------------------------
+// The current table is the whole 4 bit field; unlike the AXP2101 there is no
+// "no charging" code in it, so every entry is a real current and a small request
+// snaps to 100 mA.
+
+constexpr AxpLutEntry CHARGE_CURRENT[] = {
+    {100, 0}, {190, 1}, {280, 2},  {360, 3},   {450, 4},   {550, 5},   {630, 6},   {700, 7},
+    {780, 8}, {880, 9}, {960, 10}, {1000, 11}, {1080, 12}, {1160, 13}, {1240, 14}, {1320, 15},
+};
+
+constexpr AxpLutEntry CHARGE_VOLTAGE[] = {
+    {4100, 0},
+    {4150, 1},
+    {4200, 2},
+    {4360, 3},
+};
+
+// REG 33H bit 4: end of charge at 10 % or 15 % of the programmed current.
+constexpr AxpLutEntry CHARGE_TERMINATION[] = {
+    {10, 0},
+    {15, 1},
+};
+
+// REG 30H bits 1:0. Code 3 is the only one that switches the limit on at
+// 100 mA; code 0 leaves the input unlimited.
+constexpr AxpLutEntry VBUS_CURRENT_LIMIT[] = {
+    {0, 0},
+    {500, 1},
+    {100, 3},
+};
+
+// REG 30H bits 5:3, the voltage VBUS is held down to before it is used.
+constexpr AxpLutEntry VBUS_VHOLD[] = {
+    {4000, 0}, {4100, 1}, {4200, 2}, {4300, 3}, {4400, 4}, {4500, 5}, {4600, 6}, {4700, 7},
+};
+
+// REG 34H bits 7:6 and bits 1:0.
+constexpr AxpLutEntry PRECHARGE_TIMEOUT[] = {
+    {30, 0},
+    {40, 1},
+    {50, 2},
+    {60, 3},
+};
+constexpr AxpLutEntry CONSTANT_CURRENT_TIMEOUT[] = {
+    {7, 0},
+    {8, 1},
+    {9, 2},
+    {10, 3},
+};
+
+// REG 36H, the power key: bits 7:6 how long it has to be held to switch the chip
+// on, bits 5:4 when it counts as a long press, bits 1:0 how long it has to be
+// held to switch the chip off.
+constexpr AxpLutEntry POWER_KEY_ON_TIME[] = {
+    {128, 0},
+    {512, 1},
+    {1000, 2},
+    {2000, 3},
+};
+constexpr AxpLutEntry POWER_KEY_LONG_PRESS[] = {
+    {1000, 0},
+    {1500, 1},
+    {2000, 2},
+    {2500, 3},
+};
+constexpr AxpLutEntry POWER_KEY_OFF_TIME[] = {
+    {4000, 0},
+    {6000, 1},
+    {8000, 2},
+    {10000, 3},
+};
+
+// REG 35H. Codes 1 and 2 both mean 3.0 V in the datasheet; only code 1 is
+// listed so the setting never shows two identical options, and a chip sitting on
+// code 2 reads back as an unknown code rather than a duplicate.
+constexpr AxpLutEntry BACKUP_BATTERY_VOLTAGE[] = {
+    {3100, 0},
+    {3000, 1},
+    {2500, 3},
+};
+constexpr AxpLutEntry BACKUP_BATTERY_CURRENT[] = {
+    {50, 0},
+    {100, 1},
+    {200, 2},
+    {400, 3},
+};
+
+// REG 8BH bits 5:4.
+constexpr AxpLutEntry VBUS_VALID_VOLTAGE[] = {
+    {4000, 0},
+    {4150, 1},
+    {4450, 2},
+    {4550, 3},
+};
+
+constexpr AxpSelect SELECTS[] = {
+    {.name = "charge_current",
+     .field = {.entries = CHARGE_CURRENT, .count = 16, .reg = 0x33, .mask = 0x0F, .shift = 0}},
+    {.name = "charge_voltage", .field = {.entries = CHARGE_VOLTAGE, .count = 4, .reg = 0x33, .mask = 0x60, .shift = 5}},
+    {.name = "charge_termination_current",
+     .field = {.entries = CHARGE_TERMINATION, .count = 2, .reg = 0x33, .mask = 0x10, .shift = 4}},
+    {.name = "vbus_current_limit",
+     .field = {.entries = VBUS_CURRENT_LIMIT, .count = 3, .reg = 0x30, .mask = 0x03, .shift = 0}},
+    {.name = "vbus_vhold", .field = {.entries = VBUS_VHOLD, .count = 8, .reg = 0x30, .mask = 0x38, .shift = 3}},
+    {.name = "precharge_timeout",
+     .field = {.entries = PRECHARGE_TIMEOUT, .count = 4, .reg = 0x34, .mask = 0xC0, .shift = 6}},
+    {.name = "constant_current_timeout",
+     .field = {.entries = CONSTANT_CURRENT_TIMEOUT, .count = 4, .reg = 0x34, .mask = 0x03, .shift = 0}},
+    {.name = "power_key_on_time",
+     .field = {.entries = POWER_KEY_ON_TIME, .count = 4, .reg = 0x36, .mask = 0xC0, .shift = 6}},
+    {.name = "power_key_long_press",
+     .field = {.entries = POWER_KEY_LONG_PRESS, .count = 4, .reg = 0x36, .mask = 0x30, .shift = 4}},
+    {.name = "power_key_off_time",
+     .field = {.entries = POWER_KEY_OFF_TIME, .count = 4, .reg = 0x36, .mask = 0x03, .shift = 0}},
+    {.name = "backup_battery_voltage",
+     .field = {.entries = BACKUP_BATTERY_VOLTAGE, .count = 3, .reg = 0x35, .mask = 0x60, .shift = 5}},
+    {.name = "backup_battery_current",
+     .field = {.entries = BACKUP_BATTERY_CURRENT, .count = 4, .reg = 0x35, .mask = 0x03, .shift = 0}},
+    {.name = "vbus_valid_voltage",
+     .field = {.entries = VBUS_VALID_VOLTAGE, .count = 4, .reg = 0x8B, .mask = 0x30, .shift = 4}},
+};
+
+// --- Settings on a linear scale -------------------------------------------
+// Value = offset + step * code. VOFF is REG 31H bits 2:0, the GPIO1 ADC
+// interrupt thresholds are REG 86H/87H at 8 mV per count, and the internal timer
+// counts minutes in REG 8AH bits 6:0 (0 leaves it off).
+
+constexpr AxpNumber NUMBERS[] = {
+    {.name = "voff_voltage", .offset = 2600, .step = 100, .field = {0x31, 0x07, 0}, .min_code = 0, .max_code = 7},
+    {.name = "gpio1_adc_irq_rise", .offset = 0, .step = 8, .field = {0x86, 0xFF, 0}, .min_code = 0, .max_code = 255},
+    {.name = "gpio1_adc_irq_fall", .offset = 0, .step = 8, .field = {0x87, 0xFF, 0}, .min_code = 0, .max_code = 255},
+    {.name = "timer_minutes", .offset = 0, .step = 1, .field = {0x8A, 0x7F, 0}, .min_code = 0, .max_code = 127},
+};
+
+// --- On/off settings ------------------------------------------------------
+// The first two are the ones set_charging_enabled() and set_gauge_enabled()
+// drive; the rest are the chip's other single bit switches.
+
+constexpr AxpFlag FLAGS[] = {
+    // REG 33H bit 7 switches the charger, including its external channel.
+    {.name = "charging", .field = {0x33, 0x80, 7}},
+    // REG B8H bit 7 runs the coulomb counter. Without it the counters in REG
+    // B0H-B7H stop moving, so there is nothing to integrate charge from.
+    {.name = "gauge", .field = {0xB8, 0x80, 7}},
+    {.name = "battery_monitor", .field = {0x32, 0x40, 6}},
+    {.name = "over_temperature_shutdown", .field = {0x8F, 0x04, 2}},
+    {.name = "vbus_vhold_enable", .field = {0x30, 0x40, 6}},
+    {.name = "vbus_ignore_n_vbusen", .field = {0x30, 0x80, 7}},
+    {.name = "backup_battery_charging", .field = {0x35, 0x80, 7}},
+    {.name = "charge_external_channel", .field = {0x34, 0x04, 2}},
+    {.name = "dcdc1_force_pwm", .field = {0x80, 0x08, 3}},
+    {.name = "dcdc2_force_pwm", .field = {0x80, 0x04, 2}},
+    {.name = "dcdc3_force_pwm", .field = {0x80, 0x02, 1}},
+};
+
+constexpr AxpModel MODEL = {
+    .name = "AXP192",
+    .rails = RAILS,
+    .adc_channels = ADC_CHANNELS,
+    .events = EVENTS,
+    .status_flags = STATUS_FLAGS,
+    .selects = SELECTS,
+    .numbers = NUMBERS,
+    .flags = FLAGS,
+    // REG 32H bit 7 removes the chip's outputs. The AXP192 has no register that
+    // restarts the SoC, so `restart` stays unset and the button is not offered.
+    // REG B8H bit 5 clears the coulomb counters and clears itself again.
+    .power_off = {0x32, 0x80, 7},
+    .restart = {axp_base::AXP_REG_NONE, 0, 0},
+    .gauge_reset = {0xB8, 0x20, 5},
+    .chip_id_reg = axp_base::AXP_REG_NONE,
+    .chip_id = 0x00,
+    .status_base = 0x00,
+    .status_count = 2,
+    .rail_count = sizeof(RAILS) / sizeof(RAILS[0]),
+    .adc_count = sizeof(ADC_CHANNELS) / sizeof(ADC_CHANNELS[0]),
+    .event_count = sizeof(EVENTS) / sizeof(EVENTS[0]),
+    .status_flag_count = sizeof(STATUS_FLAGS) / sizeof(STATUS_FLAGS[0]),
+    .select_count = sizeof(SELECTS) / sizeof(SELECTS[0]),
+    .number_count = sizeof(NUMBERS) / sizeof(NUMBERS[0]),
+    .flag_count = sizeof(FLAGS) / sizeof(FLAGS[0]),
+    .irq_status_base = 0x44,
+    .irq_status_count = 4,
+    .irq_enable_base = 0x40,
+    // The AXP192 counts coulombs in REG B0H-B7H but has no state of charge
+    // register, so there is no battery percentage to publish.
+    .gauge_soc_reg = axp_base::AXP_REG_NONE,
+};
+
+// --- GPIO ---------------------------------------------------------------
+// GPIO0-2 share a layout: a three bit function field in REG 90H/92H/93H, the
+// level in REG 94H, and a pull-down switch in REG 97H. GPIO3 and GPIO4 switch
+// between four functions in REG 95H, but only once its bit 7 selects GPIO mode,
+// and their value lives in REG 96H.
+
+/// GPIO0 to GPIO4 are free; GPIO5 shares the N_RSTO reset line and is left out.
+/// `GPIO_PIN_COUNT` cannot be used here: the ESP-IDF headers define it as a
+/// macro for the SoC's own pin count.
+constexpr uint8_t AXP192_GPIO_COUNT = 5;
+
+constexpr uint8_t GPIO012_FUNCTION_REG[] = {0x90, 0x92, 0x93};
+constexpr uint8_t GPIO012_LEVEL_REG = 0x94;
+constexpr uint8_t GPIO34_FUNCTION_REG = 0x95;
+constexpr uint8_t GPIO34_LEVEL_REG = 0x96;
+constexpr uint8_t GPIO012_PULLDOWN_REG = 0x97;
+
+/// GPIO012 function field: open drain output, or plain input.
+constexpr uint8_t GPIO012_FUNCTION_OPEN_DRAIN = 0x00;
+constexpr uint8_t GPIO012_FUNCTION_INPUT = 0x01;
+/// GPIO34 function field: open drain output, or plain input.
+constexpr uint8_t GPIO34_FUNCTION_OPEN_DRAIN = 0x01;
+constexpr uint8_t GPIO34_FUNCTION_INPUT = 0x02;
+/// REG 95H bit 7 hands GPIO3 and GPIO4 to the GPIO block at all.
+constexpr uint8_t GPIO34_ENABLE = 0x80;
+
+const LogString *gpio012_function_name(uint8_t pin, uint8_t code) {
+  switch (code) {
+    case 0x00:
+      return LOG_STR("open drain output");
+    case 0x01:
+      return LOG_STR("input");
+    case 0x02:
+      if (pin == 0)
+        return LOG_STR("LDO");
+      return pin == 1 ? LOG_STR("PWM1") : LOG_STR("PWM2");
+    case 0x03:
+      return LOG_STR("reserved");
+    case 0x04:
+      return LOG_STR("ADC input");
+    case 0x05:
+      return LOG_STR("output low");
     default:
-        break;
-    }
+      return LOG_STR("float");
+  }
 }
 
-uint8_t AXP192::getChargingLedMode()
-{
-    int val = readRegister(XPOWERS_AXP192_CHGLED_SET_CTRL);
-    if (val == -1)return XPOWERS_CHG_LED_OFF;
-//    val >>= 1;
-    if ((val & 0x08) == 0x08) { //was 0x02
-        val >>= 4;
-        return val & 0x03;
-    }
-    return XPOWERS_CHG_LED_CTRL_CHG;
-}
-
-/**
- * @brief  Precharge current limit
- * @note  Precharge current limit 25*N mA
- * @param  opt: 25 * opt
- * @retval None
- */
-void AXP192::setPrechargeCurr(xpowers_prechg_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_IPRECHG_SET);
-    if (val == -1)return;
-    val &= 0xFC;
-    writeRegister(XPOWERS_AXP192_IPRECHG_SET, val | opt);
-}
-
-xpowers_prechg_t AXP192::getPrechargeCurr(void)
-{
-    return (xpowers_prechg_t)(readRegister(XPOWERS_AXP192_IPRECHG_SET) & 0x03);
-}
-
-
-/**
-* @brief Set charge current.
-* @param  opt: See xpowers_axp192_chg_curr_t enum for details.
-* @retval
-*/
-bool AXP192::setChargerConstantCurr(uint8_t opt)
-{
-    if (opt > XPOWERS_AXP192_CHG_CUR_1000MA)return false;
-    int val = readRegister(XPOWERS_AXP192_ICC_CHG_SET);
-    if (val == -1)return false;
-    val &= 0xF8; //was 0xE0
-    return 0 == writeRegister(XPOWERS_AXP192_ICC_CHG_SET, val | opt);
-}
-
-/**
- * @brief Get charge current settings.
-*  @retval See xpowers_axp192_chg_curr_t enum for details.
- */
-uint8_t AXP192::getChargerConstantCurr(void)
-{
-    int val = readRegister(XPOWERS_AXP192_ICC_CHG_SET);
-    if (val == -1)return 0;
-    return val & 0x0F; //was 0x1F
-}
-
-/**
- * @brief  Charging termination current
- * @note   Charging termination of current limit
- * @retval
- */
-void AXP192::setChargerTerminationCurr(xpowers_axp192_chg_iterm_t opt) //updated
-{
-    int val = readRegister(XPOWERS_AXP192_ITERM_CHG_SET_CTRL);
-    if (val == -1)return;
-    val &= 0xEF; //was F0
-    writeRegister(XPOWERS_AXP192_ITERM_CHG_SET_CTRL, val | opt);
-}
-
-xpowers_axp192_chg_iterm_t AXP192::getChargerTerminationCurr(void) //updated
-{
-    return (xpowers_axp192_chg_iterm_t)(readRegister(XPOWERS_AXP192_ITERM_CHG_SET_CTRL) & 0x10); //was 0X0F
-}
-
-void AXP192::enableChargerTerminationLimit(void) 
-{
-    int val = readRegister(XPOWERS_AXP192_ITERM_CHG_SET_CTRL);
-    if (val == -1)return;
-    writeRegister(XPOWERS_AXP192_ITERM_CHG_SET_CTRL, val | 0x10);
-}
-
-void AXP192::disableChargerTerminationLimit(void)
-{
-    int val = readRegister(XPOWERS_AXP192_ITERM_CHG_SET_CTRL);
-    if (val == -1)return;
-    writeRegister(XPOWERS_AXP192_ITERM_CHG_SET_CTRL, val & 0xEF);
-}
-
-bool AXP192::isChargerTerminationLimit(void){ return getRegisterBit(XPOWERS_AXP192_ITERM_CHG_SET_CTRL, 4); }
-
-
-/**
-* @brief Set charge target voltage.
-* @param  opt: See xpowers_axp192_chg_vol_t enum for details.
-* @retval
-*/
-bool AXP192::setChargeTargetVoltage(uint8_t opt) //updated
-{
-    if (opt > XPOWERS_AXP192_CHG_VOL_MAX)return false;
-    int val = readRegister(XPOWERS_AXP192_CV_CHG_VOL_SET);
-    if (val == -1)return false;
-    val &= 0x9F; //was 0xF8
-    return 0 == writeRegister(XPOWERS_AXP192_CV_CHG_VOL_SET, val | (opt << 5));
-}
-
-/**
- * @brief Get charge target voltage settings.
- * @retval See xpowers_axp192_chg_vol_t enum for details.
- */
-uint8_t AXP192::getChargeTargetVoltage(void){ return ((readRegister(XPOWERS_AXP192_CV_CHG_VOL_SET) & 0x06) >> 5); } //updated
-
-
-/**
- * @brief  Thermal regulation threshold setting
- * @note   Thermal regulation threshold setting
- */
-void AXP192::setThermaThreshold(xpowers_thermal_t opt)
-{
-    int val = readRegister(XPOWERS_AXP192_THE_REGU_THRES_SET);
-    if (val == -1)return;
-    val &= 0xFC;
-    writeRegister(XPOWERS_AXP192_THE_REGU_THRES_SET, val | opt);
-}
-
-xpowers_thermal_t AXP192::getThermaThreshold(void)
-{
-    return (xpowers_thermal_t)(readRegister(XPOWERS_AXP192_THE_REGU_THRES_SET) & 0x03);
-}
-
-uint8_t AXP192::getBatteryParameter(){ return readRegister(XPOWERS_AXP192_BAT_PARAME); }
-
-void AXP192::fuelGaugeControl(bool writeROM, bool enable)
-{
-    if (writeROM) {
-        clrRegisterBit(XPOWERS_AXP192_FUEL_GAUGE_CTRL, 4);
-    } else {
-        setRegisterBit(XPOWERS_AXP192_FUEL_GAUGE_CTRL, 4);
-    }
-    if (enable) {
-        setRegisterBit(XPOWERS_AXP192_FUEL_GAUGE_CTRL, 0);
-    } else {
-        clrRegisterBit(XPOWERS_AXP192_FUEL_GAUGE_CTRL, 0);
-    }
-}
-
-/*
- * Interrupt status/control functions
- */
-
-/**
-* @brief  Get the interrupt controller mask value.
-* @retval   Mask value corresponds to xpowers_axp192_irq_t ,
-*/
-uint64_t AXP192::getIrqStatus(void)
-{
-    statusRegister[0] = readRegister(XPOWERS_AXP192_INTSTS1);
-    statusRegister[1] = readRegister(XPOWERS_AXP192_INTSTS2);
-    statusRegister[2] = readRegister(XPOWERS_AXP192_INTSTS3);
-    statusRegister[3] = readRegister(XPOWERS_AXP192_INTSTS4); //extra register in AXP192
-    return (uint32_t)(statusRegister[0] << 24) | (uint32_t)(statusRegister[1] << 16) | (uint32_t)(statusRegister[2] << 8) | (uint32_t)(statusRegister[3]);
-}
-
-
-/**
- * @brief  Clear interrupt controller state.
- */
-void AXP192::clearIrqStatus()
-{
-    for (int i = 0; i < XPOWERS_AXP192_INTSTS_CNT; i++) {
-        writeRegister(XPOWERS_AXP192_INTSTS1 + i, 0xFF);
-        statusRegister[i] = 0;
-    }
-}
-
-/*
-*  @brief  Debug interrupt setting register
-* */
-
-void AXP192::printIntRegister()
-{
-    for (int i = 0; i < XPOWERS_AXP192_INTSTS_CNT; i++) {
-        uint8_t val =  readRegister(XPOWERS_AXP192_INTEN1 + i);
-        printf("INT[%d] HEX:0x%X\n", i, val);
-    }
-}
-
-
-/**
- * @brief  Enable PMU interrupt control mask .
- * @param  opt: View the related chip type xpowers_axp192_irq_t enumeration
- *              parameters in "axp192_cost.h"
- * @retval
- */
-bool AXP192::enableIRQ(uint64_t opt){ return setInterruptImpl(opt, true); }
-
-/**
- * @brief  Disable PMU interrupt control mask .
- * @param  opt: View the related chip type xpowers_axp192_irq_t enumeration
- *              parameters in "axp192_cost.h"
- * @retval
- */
-bool AXP192::disableIRQ(uint64_t opt){ return setInterruptImpl(opt, false); }
-
-//IRQ STATUS 0
-bool AXP192::isDropWarningLevel2Irq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_WARNING_LEVEL2_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-bool AXP192::isDropWarningLevel1Irq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_WARNING_LEVEL1_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-bool AXP192::isGaugeWdtTimeoutIrq()
-{
-    uint8_t mask = XPOWERS_AXP192_WDT_TIMEOUT_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-bool AXP192::isStateOfChargeLowIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_GAUGE_NEW_SOC_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatChargerOverTemperatureIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_CHG_OVER_TEMP_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatChargerUnderTemperatureIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_CHG_UNDER_TEMP_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatWorkOverTemperatureIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_NOR_OVER_TEMP_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatWorkUnderTemperatureIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_NOR_UNDER_TEMP_IRQ;
-    if (intRegister[0] & mask) {
-        return IS_BIT_SET(statusRegister[0], mask);
-    }
-    return false;
-}
-
-//IRQ STATUS 1
-bool AXP192::isVbusInsertIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_VBUS_INSERT_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-}
-
-bool AXP192::isVbusRemoveIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_VBUS_REMOVE_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatInsertIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_INSERT_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatRemoveIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_REMOVE_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-}
-
-bool AXP192::isPekeyShortPressIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_PKEY_SHORT_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-
-}
-
-bool AXP192::isPekeyLongPressIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_PKEY_LONG_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-}
-
-bool AXP192::isPekeyNegativeIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_PKEY_NEGATIVE_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-}
-
-bool AXP192::isPekeyPositiveIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_PKEY_POSITIVE_IRQ  >> 8;
-    if (intRegister[1] & mask) {
-        return IS_BIT_SET(statusRegister[1], mask);
-    }
-    return false;
-}
-
-//IRQ STATUS 2
-bool AXP192::isWdtExpireIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_WDT_EXPIRE_IRQ  >> 16;
-    if (intRegister[2] & mask) {
-        return IS_BIT_SET(statusRegister[2], mask);
-    }
-    return false;
-}
-
-bool AXP192::isLdoOverCurrentIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_LDO_OVER_CURR_IRQ  >> 16;
-    if (intRegister[2] & mask) {
-        return IS_BIT_SET(statusRegister[2], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatChargeDoneIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_CHG_DONE_IRQ  >> 16;
-    if (intRegister[2] & mask) {
-        return IS_BIT_SET(statusRegister[2], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatChargeStartIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_CHG_START_IRQ  >> 16;
-    if (intRegister[2] & mask) {
-        return IS_BIT_SET(statusRegister[2], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatDieOverTemperatureIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_DIE_OVER_TEMP_IRQ  >> 16;
-    if (intRegister[2] & mask) {
-        return IS_BIT_SET(statusRegister[2], mask);
-    }
-    return false;
-}
-
-bool AXP192::isChargeOverTimeoutIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_CHARGER_TIMER_IRQ  >> 16;
-    if (intRegister[2] & mask) {
-        return IS_BIT_SET(statusRegister[2], mask);
-    }
-    return false;
-}
-
-bool AXP192::isBatOverVoltageIrq(void)
-{
-    uint8_t mask = XPOWERS_AXP192_BAT_OVER_VOL_IRQ  >> 16;
-    if (intRegister[2] & mask) {
-        return IS_BIT_SET(statusRegister[2], mask);
-    }
-    return false;
-}
-
-
-uint8_t AXP192::getChipID(void)
-{
-    return readRegister(XPOWERS_AXP192_IC_TYPE);
-}
-
-bool AXP192::getProtectedChannel(uint8_t channel) {
-    return __protectedMask & _BV(channel);
-}
-
-uint16_t AXP192::getPowerChannelVoltage(uint8_t channel)
-{
-    switch (channel) {
-    case XPOWERS_DCDC1:
-        return getDC1Voltage();
-    case XPOWERS_DCDC2:
-        return getDC2Voltage();
-    case XPOWERS_DCDC3:
-        return getDC3Voltage();
-     case XPOWERS_ALDO1:
-        return getALDO1Voltage();
-    case XPOWERS_ALDO2:
-        return getALDO2Voltage();
-    case XPOWERS_ALDO3:
-        return getALDO3Voltage();
-    case XPOWERS_ALDO4:
-        return getALDO4Voltage();
-    case XPOWERS_DLDO3:
-        return getDLDO3Voltage();
-    case XPOWERS_DLDO2:
-        return getDLDO2Voltage();
-    // case XPOWERS_VBACKUP:
-    //     return getButtonBatteryVoltage();
+const LogString *gpio34_function_name(uint8_t code) {
+  switch (code) {
+    case 0x00:
+      return LOG_STR("external charge control");
+    case 0x01:
+      return LOG_STR("open drain output");
+    case 0x02:
+      return LOG_STR("input");
     default:
-        break;
-    }
-    return 0;
+      return LOG_STR("reserved");
+  }
 }
 
-bool inline AXP192::enablePowerOutput(uint8_t channel)
-{
-    switch (channel) {
-    case XPOWERS_DCDC1:
-        return enableDC1();
-    case XPOWERS_DCDC2:
-        return enableDC2();
-    case XPOWERS_DCDC3:
-        return enableDC3();
-    case XPOWERS_ALDO1:
-        return enableALDO1();
-    case XPOWERS_ALDO2:
-        return enableALDO2();
-    case XPOWERS_ALDO3:
-        return enableALDO3();
-    case XPOWERS_ALDO4:
-        return enableALDO4();
-    case XPOWERS_DLDO3:
-        return enableDLDO3();
-    case XPOWERS_DLDO2:
-        return enableDLDO2();
-    // case XPOWERS_VBACKUP:
-    //     return enableButtonBatteryCharge();
-    default:
-        break;
+}  // namespace
+
+ESPHOME_LOG_TAG(TAG, "axp192");
+
+AXP192::AXP192() : AxpComponent(MODEL) {}
+
+void AXP192::pin_mode(uint8_t pin, gpio::Flags flags) {
+  const bool input = (flags & gpio::FLAG_INPUT) != gpio::FLAG_NONE;
+  const bool pulldown = (flags & gpio::FLAG_PULLDOWN) != gpio::FLAG_NONE;
+
+  if (pin < 3) {
+    const uint8_t bit = static_cast<uint8_t>(1u << pin);
+    if (pin == 0 && !input) {
+      // GPIO0 and LDOIO0 are the same pin, so an output here overrides the rail.
+      ESP_LOGD(TAG, "GPIO0 is switched to an open drain output, LDOIO0 is off");
     }
+    if (!this->update_reg_(GPIO012_FUNCTION_REG[pin], 0x07,
+                           input ? GPIO012_FUNCTION_INPUT : GPIO012_FUNCTION_OPEN_DRAIN)) {
+      return;
+    }
+    this->update_reg_(GPIO012_PULLDOWN_REG, bit, pulldown ? bit : 0);
+    return;
+  }
+
+  if (pin < AXP192_GPIO_COUNT) {
+    // GPIO3 occupies bits 1:0 of REG 95H and GPIO4 bits 3:2.
+    const uint8_t shift = pin == 3 ? 0 : 2;
+    const uint8_t code = input ? GPIO34_FUNCTION_INPUT : GPIO34_FUNCTION_OPEN_DRAIN;
+    this->update_reg_(GPIO34_FUNCTION_REG, static_cast<uint8_t>(GPIO34_ENABLE | (0x03 << shift)),
+                      static_cast<uint8_t>(GPIO34_ENABLE | (code << shift)));
+    return;
+  }
+
+  ESP_LOGW(TAG, "GPIO%u is not a free GPIO of this chip", static_cast<unsigned>(pin));
+}
+
+bool AXP192::digital_read(uint8_t pin) {
+  uint8_t reg;
+  uint8_t bit;
+  if (pin < 3) {
+    reg = GPIO012_LEVEL_REG;
+    bit = static_cast<uint8_t>(4 + pin);
+  } else if (pin < AXP192_GPIO_COUNT) {
+    reg = GPIO34_LEVEL_REG;
+    bit = static_cast<uint8_t>(4 + (pin - 3));
+  } else {
+    ESP_LOGW(TAG, "GPIO%u is not a free GPIO of this chip", static_cast<unsigned>(pin));
     return false;
-}
+  }
 
-bool inline AXP192::disablePowerOutput(uint8_t channel)
-{
-    if (getProtectedChannel(channel)) {
-        ESP_LOGE(TAG, "Failed to disable the power channel, the power channel has been protected");
-        return false;
-    }
-    switch (channel) {
-    case XPOWERS_DCDC1:
-        return disableDC1();
-    case XPOWERS_DCDC2:
-        return disableDC2();
-    case XPOWERS_DCDC3:
-        return disableDC3();
-    case XPOWERS_ALDO1:
-        return disableALDO1();
-    case XPOWERS_ALDO2:
-        return disableALDO2();
-    case XPOWERS_ALDO3:
-        return disableALDO3();
-    case XPOWERS_ALDO4:
-        return disableALDO4();
-    case XPOWERS_DLDO3:
-        return disableDLDO3();
-    case XPOWERS_DLDO2:
-        return disableDLDO2();
-    // case XPOWERS_VBACKUP:
-    //     return disableButtonBatteryCharge();
-    default:
-        break;
-    }
+  uint8_t value = 0;
+  if (!this->read_reg_(reg, value)) {
     return false;
+  }
+  return (value & (1u << bit)) != 0;
 }
 
-bool inline AXP192::isPowerChannelEnable(uint8_t channel)
-{
-    switch (channel) {
-    case XPOWERS_DCDC1:
-        return isEnableDC1();
-    case XPOWERS_DCDC2:
-        return isEnableDC2();
-    case XPOWERS_DCDC3:
-        return isEnableDC3();
-    case XPOWERS_ALDO1:
-        return isEnableALDO1();
-    case XPOWERS_ALDO2:
-        return isEnableALDO2();
-    case XPOWERS_ALDO3:
-        return isEnableALDO3();
-    case XPOWERS_ALDO4:
-        return isEnableALDO4();
-    case XPOWERS_DLDO3:
-        return isEnableDLDO3();
-    case XPOWERS_DLDO2:
-        return isEnableDLDO2();
-    // case XPOWERS_VBACKUP:
-    //     return isEnableButtonBatteryCharge();
-    default:
-        break;
-    }
-    return false;
+void AXP192::digital_write(uint8_t pin, bool value) {
+  uint8_t reg;
+  uint8_t bit;
+  if (pin < 3) {
+    reg = GPIO012_LEVEL_REG;
+    bit = pin;
+  } else if (pin < AXP192_GPIO_COUNT) {
+    reg = GPIO34_LEVEL_REG;
+    bit = static_cast<uint8_t>(pin - 3);
+  } else {
+    ESP_LOGW(TAG, "GPIO%u is not a free GPIO of this chip", static_cast<unsigned>(pin));
+    return;
+  }
+
+  // The outputs are open drain, so a one releases the pin to its pull-up and a
+  // zero pulls it down through the internal NMOS.
+  const uint8_t mask = static_cast<uint8_t>(1u << bit);
+  this->update_reg_(reg, mask, value ? mask : 0);
 }
 
-bool inline AXP192::setPowerChannelVoltage(uint8_t channel, uint16_t millivolt)
-{
-    if (getProtectedChannel(channel)) {
-        ESP_LOGE(TAG, "Failed to set the power channel, the power channel has been protected");
-        return false;
+void AXP192::dump_config() {
+  AxpComponent::dump_config();
+
+  uint8_t levels012 = 0;
+  uint8_t levels34 = 0;
+  uint8_t function_reg = 0;
+  if (!this->read_reg_(GPIO012_LEVEL_REG, levels012) || !this->read_reg_(GPIO34_LEVEL_REG, levels34) ||
+      !this->read_reg_(GPIO34_FUNCTION_REG, function_reg)) {
+    return;
+  }
+
+  for (uint8_t pin = 0; pin < AXP192_GPIO_COUNT; pin++) {
+    const bool high = pin < 3 ? (levels012 & (1u << (4 + pin))) != 0 : (levels34 & (1u << (4 + (pin - 3)))) != 0;
+    const LogString *level = high ? LOG_STR("high") : LOG_STR("low");
+
+    uint8_t function = 0;
+    if (pin < 3) {
+      if (!this->read_reg_(GPIO012_FUNCTION_REG[pin], function)) {
+        return;
+      }
+      ESP_LOGCONFIG(TAG, "  GPIO%u: %s, reads %s", static_cast<unsigned>(pin),
+                    LOG_STR_ARG(gpio012_function_name(pin, function & 0x07)), LOG_STR_ARG(level));
+      continue;
     }
-    switch (channel) {
-    case XPOWERS_DCDC1:
-        return setDC1Voltage(millivolt);
-    case XPOWERS_DCDC2:
-        return setDC2Voltage(millivolt);
-    case XPOWERS_DCDC3:
-        return setDC3Voltage(millivolt);
-    case XPOWERS_ALDO1:
-        return setALDO1Voltage(millivolt);
-    case XPOWERS_ALDO2:
-        return setALDO2Voltage(millivolt);
-    case XPOWERS_ALDO3:
-        return setALDO3Voltage(millivolt);
-    case XPOWERS_ALDO4:
-        return setALDO4Voltage(millivolt);
-    case XPOWERS_DLDO3:
-        return setDLDO3Voltage(millivolt);
-    case XPOWERS_DLDO2:
-        return setDLDO2Voltage(millivolt);
-    // case XPOWERS_VBACKUP:
-    //     return setButtonBatteryChargeVoltage(millivolt);
-    default:
-        break;
-    }
-    return false;
+
+    function = static_cast<uint8_t>((function_reg >> (pin == 3 ? 0 : 2)) & 0x03);
+    ESP_LOGCONFIG(TAG, "  GPIO%u: %s%s, reads %s", static_cast<unsigned>(pin),
+                  (function_reg & GPIO34_ENABLE) != 0 ? LOG_STR("") : LOG_STR("not in GPIO mode, "),
+                  LOG_STR_ARG(gpio34_function_name(function)), LOG_STR_ARG(level));
+  }
 }
 
-bool AXP192::initImpl()
-{
-    if (getChipID() == XPOWERS_AXP192_CHIP_ID) {
-        disableTSPinMeasure();      //Disable NTC temperature detection by default
-        return true;
-    }
-    return false;
+}  // namespace esphome::axp192
+
+void esphome::axp192::AXP192GPIOPin::setup() { this->pin_mode(this->flags_); }
+
+void esphome::axp192::AXP192GPIOPin::pin_mode(gpio::Flags flags) {
+  if (this->parent_ != nullptr)
+    this->parent_->pin_mode(this->pin_, flags);
 }
 
-/*
- * Interrupt control functions
- */
-bool AXP192::setInterruptImpl(uint32_t opts, bool enable)
-{
-    int res = 0;
-    uint8_t data = 0, value = 0;
-    ESP_LOGD(TAG, "%s - HEX:0x %lx \n", enable ? "ENABLE" : "DISABLE", opts);
-    if (opts & 0x0000FF) {
-        value = opts & 0xFF;
-        // ESP_LOGD(TAG, "Write INT0: %x\n", value);
-        data = readRegister(XPOWERS_AXP192_INTEN1);
-        intRegister[0] =  enable ? (data | value) : (data & (~value));
-        res |= writeRegister(XPOWERS_AXP192_INTEN1, intRegister[0]);
-    }
-    if (opts & 0x00FF00) {
-        value = opts >> 8;
-        // ESP_LOGD(TAG, "Write INT1: %x\n", value);
-        data = readRegister(XPOWERS_AXP192_INTEN2);
-        intRegister[1] =  enable ? (data | value) : (data & (~value));
-        res |= writeRegister(XPOWERS_AXP192_INTEN2, intRegister[1]);
-    }
-    if (opts & 0xFF0000) {
-        value = opts >> 16;
-        // ESP_LOGD(TAG, "Write INT2: %x\n", value);
-        data = readRegister(XPOWERS_AXP192_INTEN3);
-        intRegister[2] =  enable ? (data | value) : (data & (~value));
-        res |= writeRegister(XPOWERS_AXP192_INTEN3, intRegister[2]);
-    }
-    return res == 0;
+bool esphome::axp192::AXP192GPIOPin::digital_read() {
+  return this->parent_ != nullptr && this->parent_->digital_read(this->pin_) != this->inverted_;
 }
 
-
-float AXP192::resistance_to_temperature(float resistance, float SteinhartA, 
-                                         float SteinhartB, float SteinhartC)
-{
-    float ln_r = log(resistance);
-    float t_inv = SteinhartA + SteinhartB * ln_r + SteinhartC * pow(ln_r, 3);
-    return (1.0f / t_inv) - 273.15f;
+void esphome::axp192::AXP192GPIOPin::digital_write(bool value) {
+  if (this->parent_ != nullptr)
+    this->parent_->digital_write(this->pin_, value != this->inverted_);
 }
 
-} // namespace axp192
-} // namespace esphome
-
-
-
+size_t esphome::axp192::AXP192GPIOPin::dump_summary(char *buffer, size_t len) const {
+  return buf_append_printf(buffer, len, 0, "%u via AXP192", this->pin_);
+}

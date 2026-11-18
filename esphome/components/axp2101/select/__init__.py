@@ -2,7 +2,7 @@ import esphome.codegen as cg
 from esphome.components import select
 from esphome.components.axp_base import CONF_AXP_ID, AxpComponent
 import esphome.config_validation as cv
-from esphome.const import ENTITY_CATEGORY_CONFIG
+from esphome.const import CONF_INITIAL_OPTION, ENTITY_CATEGORY_CONFIG
 
 from .. import axp2101_ns
 
@@ -41,14 +41,27 @@ SETTINGS = {
     "power_key_long_press": ["1s", "1.5s", "2s", "2.5s"],
 }
 
+
+def _initial_option(options: list[str]):
+    """A label from the setting's own option list, applied during setup()."""
+
+    def validate(value) -> str:
+        value = cv.string_strict(value)
+        if value not in options:
+            raise cv.Invalid(f"'{value}' is not one of: {', '.join(options)}")
+        return value
+
+    return validate
+
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(CONF_AXP_ID): cv.use_id(AxpComponent),
         **{
             cv.Optional(name): select.select_schema(
                 AXP2101Select, entity_category=ENTITY_CATEGORY_CONFIG
-            )
-            for name in SETTINGS
+            ).extend({cv.Optional(CONF_INITIAL_OPTION): _initial_option(options)})
+            for name, options in SETTINGS.items()
         },
     }
 )
@@ -67,3 +80,5 @@ async def to_code(config):
         await cg.register_parented(var, hub)
         await cg.register_component(var, conf)
         cg.add(var.set_select_name(name))
+        if (initial := conf.get(CONF_INITIAL_OPTION)) is not None:
+            cg.add(var.set_initial_option_index(options.index(initial)))

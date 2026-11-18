@@ -21,7 +21,9 @@ void AXP2101StatusBinarySensor::setup() {
 void AXP2101StatusBinarySensor::dump_config() { LOG_BINARY_SENSOR("  ", "Status", this); }
 
 void AXP2101StatusBinarySensor::publish_from_chip() {
-  if (this->flag_ == nullptr) {
+  if (this->flag_ == nullptr || !this->parent_->has_status()) {
+    // With no status read there is nothing to report; publishing false would
+    // claim the flag is clear when the chip was not reached at all.
     return;
   }
   this->publish_state(this->parent_->status_bit(this->flag_->bit));

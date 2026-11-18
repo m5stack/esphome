@@ -239,7 +239,8 @@ constexpr AxpAdcChannel ADC_CHANNELS[] = {
      .mid_reg = axp_base::AXP_REG_NONE,
      .lo_reg = 0x35,
      .lo_mask = 0xFF,
-     .lo_bits = 8},
+     .lo_bits = 8,
+     .lo_shift = 0},
     {.name = "ts_voltage",
      .lsb = 0.0005f,  // datasheet: 0.5 mV/LSB
      .offset = 0.0f,
@@ -250,7 +251,8 @@ constexpr AxpAdcChannel ADC_CHANNELS[] = {
      .mid_reg = axp_base::AXP_REG_NONE,
      .lo_reg = 0x37,
      .lo_mask = 0xFF,
-     .lo_bits = 8},
+     .lo_bits = 8,
+     .lo_shift = 0},
     {.name = "vbus_voltage",
      .lsb = 0.001f,  // datasheet: 1 mV/LSB
      .offset = 0.0f,
@@ -261,7 +263,8 @@ constexpr AxpAdcChannel ADC_CHANNELS[] = {
      .mid_reg = axp_base::AXP_REG_NONE,
      .lo_reg = 0x39,
      .lo_mask = 0xFF,
-     .lo_bits = 8},
+     .lo_bits = 8,
+     .lo_shift = 0},
     {.name = "system_voltage",
      .lsb = 0.001f,  // datasheet: 1 mV/LSB
      .offset = 0.0f,
@@ -272,7 +275,8 @@ constexpr AxpAdcChannel ADC_CHANNELS[] = {
      .mid_reg = axp_base::AXP_REG_NONE,
      .lo_reg = 0x3B,
      .lo_mask = 0xFF,
-     .lo_bits = 8},
+     .lo_bits = 8,
+     .lo_shift = 0},
     // The datasheet gives the die temperature channel 0.1 mV per count but no
     // transfer function. The conversion used by every published driver for this
     // chip is T = 22 + (7274 - raw) / 20, i.e. -2 mV per degree around 22 C.
@@ -288,7 +292,8 @@ constexpr AxpAdcChannel ADC_CHANNELS[] = {
      .mid_reg = axp_base::AXP_REG_NONE,
      .lo_reg = 0x3D,
      .lo_mask = 0xFF,
-     .lo_bits = 8},
+     .lo_bits = 8,
+     .lo_shift = 0},
 };
 
 // --- Interrupt sources, 6.13.2.40 to 6.13.2.45 ----------------------------
@@ -367,11 +372,25 @@ constexpr AxpLutEntry POWER_KEY_LONG_PRESS[] = {
     {2500, 3},
 };
 
-// Single-bit settings, from REG 18H (6.13.2.14). Both are on/off switches rather
-// than one-shot controls, so they live in their own table.
+// On/off settings. Neither is a one-shot control, so they live in their own
+// table: REG 18H (6.13.2.14) holds the charger and gauge enables.
 constexpr AxpFlag FLAGS[] = {
     {.name = "charging", .field = {0x18, 0x02, 1}},
     {.name = "gauge", .field = {0x18, 0x08, 3}},
+    // REG 23H bits 4:0 (6.13.2.19-22, power-off behaviour): each converter powers
+    // the chip off by itself when its output drops under the UVP threshold. Those
+    // five bits are one group, hence `on_code`; the POR value has them all set.
+    // Bit 5 (over-voltage) is deliberately left out of the mask: a rail that runs
+    // away is still worth powering down for.
+    {.name = "dcdc_uvp_shutdown", .field = {0x23, 0x1F, 0}, .on_code = 0x1F},
+    // REG 50H bit 4 (6.13.2.46): turns the TS pin into a plain external input.
+    // Left at the thermistor setting the charger regulates against whatever sits
+    // on TS - on a board whose TS pin senses a rail instead of an NTC it reads a
+    // permanently cold cell and never charges - and the TS ADC channel reports
+    // that same rail, which is what the "is something already driving this
+    // output" checks need. The power-on value comes from EFUSE, so it differs
+    // between chips and always has to be written.
+    {.name = "ts_external_input", .field = {0x50, 0x10, 4}},
 };
 
 // Settings on a linear scale: value = offset + step * code (6.13.2.11, 6.13.2.16,

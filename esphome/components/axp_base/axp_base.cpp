@@ -19,15 +19,26 @@ static uint16_t absolute_difference(uint16_t lhs, uint16_t rhs) { return lhs > r
 void AxpComponent::setup() {
   ESP_LOGD(TAG, "Setting up %s...", this->model_->name);
 
-  uint8_t chip_id = 0;
-  if (!this->read_reg_(this->model_->chip_id_reg, chip_id)) {
-    this->mark_failed(LOG_STR("Failed to read the chip ID"));
-    return;
-  }
-  if (chip_id != this->model_->chip_id) {
-    ESP_LOGE(TAG, "Expected chip ID 0x%02X but read 0x%02X", this->model_->chip_id, chip_id);
-    this->mark_failed(LOG_STR("Unexpected chip ID"));
-    return;
+  if (this->model_->chip_id_reg == AXP_REG_NONE) {
+    // Chips such as the AXP192 have no ID register, so the only thing that can
+    // be checked is that the bus answers at all.
+    uint8_t probe = 0;
+    if (!this->read_reg_(this->model_->status_base, probe)) {
+      this->mark_failed(LOG_STR("Failed to reach the chip"));
+      return;
+    }
+    ESP_LOGD(TAG, "%s has no chip ID register, presence is not verified", this->model_->name);
+  } else {
+    uint8_t chip_id = 0;
+    if (!this->read_reg_(this->model_->chip_id_reg, chip_id)) {
+      this->mark_failed(LOG_STR("Failed to read the chip ID"));
+      return;
+    }
+    if (chip_id != this->model_->chip_id) {
+      ESP_LOGE(TAG, "Expected chip ID 0x%02X but read 0x%02X", this->model_->chip_id, chip_id);
+      this->mark_failed(LOG_STR("Unexpected chip ID"));
+      return;
+    }
   }
   this->chip_ready_ = true;
 
@@ -181,7 +192,7 @@ bool AxpComponent::set_rail_enabled(const AxpRail *rail, bool enabled) {
     ESP_LOGE(TAG, "Refusing to disable %s, it is marked always on", rail->name);
     return false;
   }
-  return this->update_reg_(rail->enable_reg, rail->enable_mask, enabled ? rail->enable_value : 0);
+  return this->update_reg_(rail->enable_reg, rail->enable_mask, enabled ? rail->enable_value : rail->disable_value);
 }
 
 bool AxpComponent::is_rail_enabled(const AxpRail *rail) {
@@ -351,7 +362,7 @@ float AxpComponent::read_adc(const AxpAdcChannel &channel) {
       low_bits = 8;
     }
     raw = (static_cast<uint32_t>(high & channel.hi_mask) << low_bits) |
-          (static_cast<uint32_t>(low & channel.lo_mask) >> (8 - low_bits));
+          (static_cast<uint32_t>(low & channel.lo_mask) >> channel.lo_shift);
   }
 
   return static_cast<float>(raw) * channel.lsb + channel.offset;
@@ -524,7 +535,9 @@ bool AxpComponent::read_flag(const AxpFlag &flag, bool &on) {
   return true;
 }
 
-bool AxpComponent::write_flag(const AxpFlag &flag, bool on) { return this->write_field_(flag.field, on ? 1 : 0); }
+bool AxpComponent::write_flag(const AxpFlag &flag, bool on) {
+  return this->write_field_(flag.field, on ? flag.on_code : 0);
+}
 
 bool AxpComponent::set_charging_enabled(bool enabled) {
   const AxpFlag *flag = this->find_flag("charging");

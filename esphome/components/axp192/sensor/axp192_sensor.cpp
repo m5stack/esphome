@@ -1,119 +1,51 @@
 #include "axp192_sensor.h"
 
-namespace esphome {
-namespace axp192 {
+#include <cmath>
 
-static const char *TAG = "axp192.sensor";
+#include "esphome/core/log.h"
 
-void AXP192Sensor::update() {
+namespace esphome::axp192 {
 
-    float reading = 0;
-    int percent = 0;
-    
-    if (battery_level_sensor_ != nullptr) {
-        percent = this->parent_->getBatteryPercent();
-        percent = this->parent_->getScaledBatteryPercent(this->battery_discharge_0pc_Voltage_ , this->battery_discharge_100pc_Voltage_ , this->battery_charge_0pc_Current_ , this->battery_charge_100pc_Current_);
-        battery_level_sensor_->publish_state(percent == -1 ? NAN : percent);
-    }
+ESPHOME_LOG_TAG(TAG, "axp192.sensor");
 
-    if(battery_voltage_sensor_ != nullptr) {
-        reading = this->parent_->getBattVoltage();
-        battery_voltage_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(usb_voltage_sensor_ != nullptr) {
-        reading = this->parent_->getACINVoltage();
-        usb_voltage_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(usb_current_sensor_ != nullptr) {
-        reading = this->parent_->getACINCurrent();
-        usb_current_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(vbus_voltage_sensor_ != nullptr) {
-        reading = this->parent_->getACINVoltage();
-        vbus_voltage_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(vbus_current_sensor_ != nullptr) {
-        reading = this->parent_->getACINCurrent();
-        vbus_current_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(internal_temperature_sensor_ != nullptr) {
-        reading = this->parent_->getInternalTemperature();
-        internal_temperature_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(battery_power_sensor_ != nullptr) {
-        reading = this->parent_->getBattPower();
-        battery_power_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(battery_charge_current_sensor_ != nullptr) {
-        reading = this->parent_->getBattChargeCurrent();
-        battery_charge_current_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(battery_discharge_current_sensor_ != nullptr) {
-        reading = this->parent_->getBattDischargeCurrent();
-        battery_discharge_current_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(aps_voltage_sensor_ != nullptr) {
-        reading = this->parent_->getAPSVoltage();
-        aps_voltage_sensor_->publish_state(reading == 0 ? NAN : reading);
-    }
-
-    if(battery_charging_binary_sensor_ != nullptr) {
-        battery_charging_binary_sensor_->publish_state(this->parent_->isCharging());
-    }
-
-    if(usb_present_binary_sensor_ != nullptr) {
-        usb_present_binary_sensor_->publish_state(this->parent_->isACINPresent());
-    }
-
-    if(usb_valid_binary_sensor_ != nullptr) {
-        usb_valid_binary_sensor_->publish_state(this->parent_->isACINValid());
-    }
-
-    if(vbus_present_binary_sensor_ != nullptr) {
-        vbus_present_binary_sensor_->publish_state(this->parent_->isVbusIn());
-    }
-
-    if(vbus_valid_binary_sensor_ != nullptr) {
-        vbus_valid_binary_sensor_->publish_state(this->parent_->isVbusGood());
-    }
-
-    if(battery_discharging_binary_sensor_ != nullptr) {
-        battery_discharging_binary_sensor_->publish_state(this->parent_->isDischarge());
-    }
-
-    if(over_temp_binary_sensor_ != nullptr) {
-        over_temp_binary_sensor_->publish_state(this->parent_->getThermalRegulationStatus());
-    }
-
-    if(battery_connected_binary_sensor_ != nullptr) {
-        battery_connected_binary_sensor_->publish_state(this->parent_->isBatteryConnect());
-    }
-
-    if(battery_active_mode_binary_sensor_ != nullptr) {
-        battery_active_mode_binary_sensor_->publish_state(this->parent_->isBatInActiveModeState());
-    }
-
-    if(low_charge_current_binary_sensor_ != nullptr) {
-        low_charge_current_binary_sensor_->publish_state(this->parent_->isChargingCurrentLessThanExpected());
-    }
-
-    this->status_clear_warning();
+void AXP192Sensor::publish_from_chip() {
+  float value = NAN;
+  if (!this->read_value_(value)) {
+    return;
+  }
+  this->publish_state(value);
 }
-
-
 
 void AXP192Sensor::dump_config() {
-    ESP_LOGCONFIG(TAG, "AXP192 Sensor: ");
+  // The value is refreshed by the hub, so there is no interval to report here.
+  LOG_SENSOR("  ", "Sensor", this);
 }
 
+void AXP192AdcSensor::setup() {
+  if (this->channel_name_ == nullptr) {
+    this->mark_failed(LOG_STR("No ADC channel configured"));
+    return;
+  }
+  this->channel_ = this->parent_->find_adc_channel(this->channel_name_);
+  if (this->channel_ == nullptr) {
+    ESP_LOGE(TAG, "'%s' is not an ADC channel of this chip", this->channel_name_);
+    this->mark_failed(LOG_STR("Unknown ADC channel"));
+    return;
+  }
+  // REG 82H and REG 83H leave most channels off, and a channel that is off
+  // reads back as zero rather than as a stale value.
+  if (!this->parent_->set_adc_enabled(*this->channel_, true)) {
+    ESP_LOGE(TAG, "Could not enable the ADC channel for %s", this->channel_name_);
+    this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+  }
 }
+
+bool AXP192AdcSensor::read_value_(float &value) {
+  if (this->channel_ == nullptr) {
+    return false;
+  }
+  value = this->parent_->read_adc(*this->channel_);
+  return !std::isnan(value);
 }
+
+}  // namespace esphome::axp192
