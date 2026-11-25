@@ -16,6 +16,7 @@ static constexpr uint8_t REG_SEN1 = 0x02;  // SEN1..SEN6 follow it
 static constexpr uint8_t REG_SEN_COUNT = 6;
 static constexpr uint8_t REG_CFIG = 0x08;
 static constexpr uint8_t REG_CTRL = 0x09;
+static constexpr uint8_t REG_REF_RST1 = 0x0A;
 static constexpr uint8_t REG_CH_ON1 = 0x0C;
 static constexpr uint8_t REG_OUTPUT1 = 0x10;  // Output1..Output3 follow it
 static constexpr uint8_t REG_OUTPUT_COUNT = 3;
@@ -35,8 +36,11 @@ static constexpr uint8_t CTRL_SLEEP_BIT = 1 << 2;
 // Reset value of the six sensitivity registers: ChxHL = 1, ChxM = 011 for both channels of the byte
 static constexpr uint8_t SEN_RESET = 0xBB;
 
-// Ch_on1 and Ch_on2 reset values, which hold every channel but channel 1. A zero bit enables a channel,
-// and bits 4 and 5 of Ch_on2 are reserved and must stay set (datasheet 12.2.5).
+// Ref_rst1/2 and Ch_on1/2 reset values, which hold every channel but channel 1. A zero bit enables a
+// channel, and bits 4 and 5 of Ch_on2 are reserved and must stay set (datasheet 12.2.5). Ref_rst2 has
+// no reserved bits that read back as one: bit 4-7 are zero (datasheet 12.2.4).
+static constexpr uint8_t REF_RST1_RESET = 0xFE;
+static constexpr uint8_t REF_RST2_RESET = 0x0F;
 static constexpr uint8_t CH_ON1_RESET = 0xFE;
 static constexpr uint8_t CH_ON2_RESET = 0x3F;
 
@@ -107,7 +111,17 @@ bool SI12TComponent::configure_() {
   if (this->write_register(REG_SEN1, config.data(), config.size()) != i2c::ERROR_OK)
     return false;
 
-  // A zero bit enables a channel; the channels without a text sensor keep the reset value, which holds them
+  // A zero bit enables a channel; the channels without a text sensor keep the reset value, which holds them.
+  // Ref_rst (0Ah/0Bh) has to be cleared as well: a set bit keeps resetting that channel's reference value,
+  // so the channel never builds the baseline a touch is measured against and reports nothing at all. Its
+  // reset value holds every channel but Ch1, which is why a chip left alone only ever reports channel 1
+  // (datasheet 12.2.4), and Ch_on (0Ch/0Dh) additionally stops sensing and calibrating on those channels
+  // (datasheet 12.2.5).
+  const std::array<uint8_t, 2> ref_rst{static_cast<uint8_t>(REF_RST1_RESET & ~(channel_mask & 0xFF)),
+                                       static_cast<uint8_t>(REF_RST2_RESET & ~((channel_mask >> 8) & 0x0F))};
+  if (this->write_register(REG_REF_RST1, ref_rst.data(), ref_rst.size()) != i2c::ERROR_OK)
+    return false;
+
   const std::array<uint8_t, 2> ch_on{static_cast<uint8_t>(CH_ON1_RESET & ~(channel_mask & 0xFF)),
                                      static_cast<uint8_t>(CH_ON2_RESET & ~((channel_mask >> 8) & 0x0F))};
   return this->write_register(REG_CH_ON1, ch_on.data(), ch_on.size()) == i2c::ERROR_OK;
