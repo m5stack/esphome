@@ -48,6 +48,8 @@ class M5StackIOE1Component final : public gpio_expander::CachedGpioExpanderCompo
   static constexpr uint8_t GPIO_COUNT = 14;
   static constexpr uint8_t MAX_LEDS = 32;
   static constexpr uint8_t PWM_CHANNEL_COUNT = 4;
+  /// Pin index (IO14) the chip drives the NeoPixel data line on.
+  static constexpr uint8_t NEOPIXEL_PIN = 13;
 
   void setup() override;
   void loop() override;
@@ -79,8 +81,8 @@ class M5StackIOE1Component final : public gpio_expander::CachedGpioExpanderCompo
   /// Read temperature value in degrees Celsius
   float get_temperature_value() { return this->read_temperature_(); }
 
-  /// Setup Neopixel LED
-  void setup_neopixel(uint8_t num) { this->config_neopixel_(num); }
+  /// Setup Neopixel LED: switch IO14 to push-pull and apply the LED count
+  void setup_neopixel(uint8_t num);
 
   /// Set LED color
   void set_led_color(const uint8_t *buf, size_t len) { this->write_led_ram_(buf, len); }

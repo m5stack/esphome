@@ -370,6 +370,19 @@ float M5StackIOE1Component::read_temperature_() {
   return static_cast<float>(value & 0x0FFF);
 }
 
+void M5StackIOE1Component::setup_neopixel(uint8_t num) {
+  // Every output defaults to open-drain, the NeoPixel driver included, and that
+  // only works with an external pull-up (datasheet 2, note 1). Once the pin is
+  // occupied by the NeoPixel function GPIO_M/GPIO_O are ignored (datasheet
+  // 2.(9)) but GPIO_DRV is not, so the push-pull drive the data line needs is
+  // applied here instead of asking the configuration for a GPIO pin on IO14.
+  this->drv_mode_mask_ &= ~(uint16_t{1} << NEOPIXEL_PIN);
+  if (!this->write_gpio_modes_())
+    return;
+
+  this->config_neopixel_(num);
+}
+
 void M5StackIOE1Component::config_neopixel_(uint8_t num) {
   if (num > MAX_LEDS)
     num = MAX_LEDS;
