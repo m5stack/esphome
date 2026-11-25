@@ -345,8 +345,9 @@ bool ST25R::reset_chip_() {
   }
 
   this->write_register(ST25R_REG_IO_CONF1, 0x07);
-  // SPI pull-downs and the AAT module enabled
-  this->write_register(ST25R_REG_IO_CONF2, (sup3v ? 0x80 : 0x00) | 0x18 | 0x20);
+  // SPI pull-downs (SPI only) and the AAT module enabled
+  this->write_register(ST25R_REG_IO_CONF2,
+                       (sup3v ? 0x80 : 0x00) | 0x20 | (this->needs_miso_pull_downs() ? 0x18 : 0x00));
   this->write_register_table_(NFCA_PROFILE_RX, std::size(NFCA_PROFILE_RX));
   this->write_register(ST25R_REG_TX_DRIVER_CONF, (15 - this->rf_power_) & 0x0F);
   this->write_register_table_(NFCA_PROFILE_TX, std::size(NFCA_PROFILE_TX));

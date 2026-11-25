@@ -93,6 +93,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual void write_command(uint8_t command) = 0;
   virtual void write_fifo(const uint8_t *data, size_t len) = 0;
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
+  /// Pull-downs on the MISO line are only used with the SPI interface and stay off on I2C
+  virtual bool needs_miso_pull_downs() const { return false; }
 
   bool reset_chip_();
   void pulse_reset_();

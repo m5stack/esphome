@@ -14,6 +14,7 @@ class ST25RSpi : public st25r::ST25R,
   void dump_config() override;
 
  protected:
+  bool needs_miso_pull_downs() const override { return true; }
   uint8_t read_register(uint8_t reg) override;
   void write_register(uint8_t reg, uint8_t value) override;
   void write_command(uint8_t command) override;

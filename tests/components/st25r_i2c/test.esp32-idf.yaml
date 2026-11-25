@@ -1,0 +1,7 @@
+substitutions:
+  irq_pin: GPIO13
+  reset_pin: GPIO14
+
+packages:
+  i2c: !include ../../test_build_components/common/i2c/esp32-idf.yaml
+  st25r_i2c: !include common.yaml
