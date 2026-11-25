@@ -1,0 +1,122 @@
+m5stack_ioe1:
+  - id: ioe1_hub
+    i2c_id: i2c_bus
+    reset: true
+    pwm_frequency: 500Hz
+  - id: ioe1_hub_int
+    i2c_id: i2c_bus
+    address: 0x70
+    reset: false
+    interrupt_pin: ${interrupt_pin}
+
+binary_sensor:
+  - platform: gpio
+    name: "M5STACK_IOE1 Button"
+    pin:
+      m5stack_ioe1_id: ioe1_hub
+      number: 0
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+  - platform: gpio
+    name: "M5STACK_IOE1 Interrupt Input"
+    pin:
+      m5stack_ioe1_id: ioe1_hub_int
+      number: 4
+      mode:
+        input: true
+      use_interrupt: true
+  - platform: gpio
+    name: "M5STACK_IOE1 Rising Edge Input"
+    pin:
+      m5stack_ioe1_id: ioe1_hub_int
+      number: 6
+      mode:
+        input: true
+        pulldown: true
+      use_interrupt: true
+      interrupt_type: RISING_EDGE
+
+switch:
+  - platform: gpio
+    name: "M5STACK_IOE1 Relay"
+    pin:
+      m5stack_ioe1_id: ioe1_hub
+      number: 2
+      mode:
+        output: true
+
+  # AW8737A amplifier control
+  - platform: m5stack_ioe1
+    id: amplifier
+    m5stack_ioe1_id: ioe1_hub
+    pin: 5
+    pulse_num: 2
+    name: "Audio Amplifier"
+
+# PWM outputs
+output:
+  - platform: m5stack_ioe1
+    id: pwm_ch1
+    m5stack_ioe1_id: ioe1_hub
+    channel: PWM_1
+    pwm_polarity: ACTIVE_HIGH
+  - platform: m5stack_ioe1
+    id: pwm_ch2
+    m5stack_ioe1_id: ioe1_hub
+    channel: PWM_2
+    pwm_polarity: ACTIVE_LOW
+
+# PWM-controlled lights
+light:
+  - platform: monochromatic
+    name: "M5STACK_IOE1 PWM Light 1"
+    output: pwm_ch1
+  - platform: monochromatic
+    name: "M5STACK_IOE1 PWM Light 2"
+    output: pwm_ch2
+
+  # Addressable RGB LEDs
+  - platform: m5stack_ioe1
+    id: rgb_leds
+    m5stack_ioe1_id: ioe1_hub
+    num_leds: 10
+    name: "M5STACK_IOE1 RGB Strip"
+
+# ADC sensors
+sensor:
+  - platform: m5stack_ioe1
+    id: adc1
+    m5stack_ioe1_id: ioe1_hub
+    channel: ADC_1
+    type: adc
+    update_interval: 10s
+    name: "M5STACK_IOE1 ADC 1"
+  - platform: m5stack_ioe1
+    id: adc2
+    m5stack_ioe1_id: ioe1_hub
+    channel: ADC_2
+    type: adc
+    update_interval: 10s
+    name: "M5STACK_IOE1 ADC 2"
+
+  # ADC reference voltage
+  - platform: m5stack_ioe1
+    name: "M5STACK_IOE1 ADC Reference Voltage"
+    m5stack_ioe1_id: ioe1_hub
+    type: adc
+    channel: REF_VOLT
+    unit_of_measurement: "mV"
+    device_class: "voltage"
+    accuracy_decimals: 0
+    filters:
+      - delta: 10
+
+  # Internal temperature of the device
+  - platform: m5stack_ioe1
+    name: "M5STACK_IOE1 Temperature"
+    m5stack_ioe1_id: ioe1_hub
+    type: temperature
+    filters:
+      - delta: 1
