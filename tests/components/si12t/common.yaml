@@ -1,0 +1,27 @@
+si12t:
+  id: si12t_hub
+  i2c_id: i2c_bus
+  address: 0x68
+  auto_mode: false
+  first_touch: 15s
+  intr_level: low_medium_high
+  response_cycles: 6
+  sleep_mode: false
+  update_interval: 100ms
+  # The interrupt output is open drain, so it needs a pull-up. Use the internal one
+  # unless the board already has its own.
+  interrupt_pin:
+    number: ${interrupt_pin}
+    mode: INPUT_PULLUP
+
+text_sensor:
+  - platform: si12t
+    si12t_id: si12t_hub
+    channel: 1
+    name: "Touch 1"
+  - platform: si12t
+    si12t_id: si12t_hub
+    channel: 12
+    name: "Touch 12"
+    sensitivity: 7
+    high_sensitivity: false
