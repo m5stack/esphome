@@ -1,0 +1,88 @@
+scs9009:
+  id: scs_bus
+
+ftservo:
+  - platform: scs9009
+    id: head_yaw
+    scs9009_id: scs_bus
+    address: 1
+    range: 300
+    zero_position: 500
+  - platform: scs9009
+    id: head_pitch
+    scs9009_id: scs_bus
+    address: 2
+    range: 300
+    zero_position: 500
+
+stackchan_motion:
+  id: head
+  yaw_servo: head_yaw
+  pitch_servo: head_pitch
+  min_yaw: -45
+  max_yaw: 45
+  min_pitch: -20
+  max_pitch: 30
+  home_yaw: 5
+  home_pitch: -5
+  nudge_step: 5
+  default_time: 500
+
+esphome:
+  on_boot:
+    - stackchan_motion.home: head
+    - stackchan_motion.look_at:
+        id: head
+        yaw: 15
+        pitch: -5
+        time: 400
+    - stackchan_motion.look_direction:
+        id: head
+        x: 0.5
+        y: 0.5
+        z: 0.1
+    - stackchan_motion.nudge:
+        id: head
+        yaw: 2
+        pitch: -2
+    - wait_until:
+        condition:
+          not:
+            stackchan_motion.is_moving: head
+    - stackchan_motion.stop: head
+
+sensor:
+  - platform: stackchan_motion
+    stackchan_motion_id: head
+    yaw:
+      name: Head yaw
+    pitch:
+      name: Head pitch
+    direction_x:
+      name: Head direction X
+    direction_y:
+      name: Head direction Y
+    direction_z:
+      name: Head direction Z
+
+number:
+  - platform: stackchan_motion
+    stackchan_motion_id: head
+    yaw:
+      name: Target yaw
+    pitch:
+      name: Target pitch
+
+button:
+  - platform: stackchan_motion
+    stackchan_motion_id: head
+    home:
+      name: Head home
+    left:
+      name: Head left
+    right:
+      name: Head right
+    up:
+      name: Head up
+    down:
+      name: Head down

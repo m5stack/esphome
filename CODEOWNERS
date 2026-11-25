@@ -247,6 +247,11 @@ esphome/components/friedrich/* @rwrozelle
 esphome/components/fs3000/* @kahrendt
 esphome/components/ft5x06/* @clydebarrow
 esphome/components/ft63x6/* @gpambrozio
+esphome/components/ftservo/* @m5stack
+esphome/components/ftservo/number/* @m5stack
+esphome/components/ftservo/sensor/* @m5stack
+esphome/components/ftservo/switch/* @m5stack
+esphome/components/ftservo_group/* @m5stack
 esphome/components/fusb302b/* @remcom
 esphome/components/gcja5/* @gcormier
 esphome/components/gdk101/* @Szewcson
@@ -561,6 +566,8 @@ esphome/components/safe_mode/* @jsuanet @kbx81 @paulmonigatti
 esphome/components/samsung/* @jorofi
 esphome/components/scd4x/* @martgras @sjtrny
 esphome/components/script/* @esphome/core
+esphome/components/scs9009/* @m5stack
+esphome/components/scs9009/ftservo/* @m5stack
 esphome/components/sdl/* @bdm310 @clydebarrow
 esphome/components/sdm_meter/* @jesserockz @polyfaces
 esphome/components/sdp3x/* @Azimath
@@ -644,6 +651,10 @@ esphome/components/st7701s/* @clydebarrow
 esphome/components/st7735/* @SenexCrenshaw
 esphome/components/st7789v/* @kbx81
 esphome/components/st7920/* @marsjan155
+esphome/components/stackchan_motion/* @m5stack
+esphome/components/stackchan_motion/button/* @m5stack
+esphome/components/stackchan_motion/number/* @m5stack
+esphome/components/stackchan_motion/sensor/* @m5stack
 esphome/components/statsd/* @Links2004
 esphome/components/stcc4/* @j9brown
 esphome/components/stm32/* @rwrozelle

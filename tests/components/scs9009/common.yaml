@@ -1,0 +1,70 @@
+scs9009:
+  id: scs_bus
+
+ftservo:
+  - platform: scs9009
+    id: servo_a
+    scs9009_id: scs_bus
+    address: 1
+    range: 300
+    zero_position: 500
+    on_move:
+      - logger.log: Servo starts moving
+    on_move_done:
+      - logger.log: Servo finished moving
+    on_error:
+      - logger.log:
+          format: "Servo error 0x%02X"
+          args: [code]
+
+esphome:
+  on_boot:
+    - ftservo.move:
+        id: servo_a
+        position: 600
+        speed: 400
+    - ftservo.move_angle:
+        id: servo_a
+        angle: 20
+        time: 500
+    - wait_until:
+        condition:
+          not:
+            ftservo.is_moving: servo_a
+    - ftservo.set_torque:
+        id: servo_a
+        enabled: true
+    - ftservo.stop: servo_a
+
+sensor:
+  - platform: ftservo
+    ftservo_id: servo_a
+    position:
+      name: Servo position
+    speed:
+      name: Servo speed
+    load:
+      name: Servo load
+    voltage:
+      name: Servo voltage
+    temperature:
+      name: Servo temperature
+    current:
+      name: Servo current
+
+number:
+  - platform: ftservo
+    ftservo_id: servo_a
+    position:
+      name: Servo target position
+    angle:
+      name: Servo angle
+    speed:
+      name: Servo speed setting
+    time:
+      name: Servo move time
+
+switch:
+  - platform: ftservo
+    ftservo_id: servo_a
+    name: Servo torque

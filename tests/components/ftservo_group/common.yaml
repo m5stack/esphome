@@ -1,0 +1,22 @@
+scs9009:
+  id: scs_bus
+
+ftservo:
+  - platform: scs9009
+    id: servo_a
+    scs9009_id: scs_bus
+    address: 1
+    range: 300
+    zero_position: 500
+  - platform: scs9009
+    id: servo_b
+    scs9009_id: scs_bus
+    address: 2
+    range: 300
+    zero_position: 500
+
+ftservo_group:
+  id: servo_pair
+  servos:
+    - servo_a
+    - servo_b
