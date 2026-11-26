@@ -1,0 +1,68 @@
+m5_unit_ncir2:
+  id: ncir2
+  update_interval: 5s
+  emissivity: 0.95
+  low_alarm:
+    temperature: 10°C
+    color:
+      red: 0%
+      green: 0%
+      blue: 100%
+    buzzer:
+      frequency: 2000Hz
+      interval: 200ms
+      duty: 50%
+  high_alarm:
+    temperature: 40°C
+
+sensor:
+  - platform: m5_unit_ncir2
+    temperature:
+      name: NCIR2 temperature
+    internal_temperature:
+      name: NCIR2 chip temperature
+
+binary_sensor:
+  - platform: m5_unit_ncir2
+    button:
+      name: NCIR2 button
+
+light:
+  - platform: m5_unit_ncir2
+    name: NCIR2 LED
+
+output:
+  - platform: m5_unit_ncir2
+    id: ncir2_buzzer
+    frequency: 4000Hz
+
+rtttl:
+  output: ncir2_buzzer
+
+number:
+  - platform: m5_unit_ncir2
+    low_alarm_temperature:
+      name: NCIR2 low alarm temperature
+    high_alarm_temperature:
+      name: NCIR2 high alarm temperature
+    low_alarm_frequency:
+      name: NCIR2 low alarm frequency
+    high_alarm_frequency:
+      name: NCIR2 high alarm frequency
+    low_alarm_interval:
+      name: NCIR2 low alarm interval
+    high_alarm_interval:
+      name: NCIR2 high alarm interval
+    low_alarm_duty:
+      name: NCIR2 low alarm duty
+    high_alarm_duty:
+      name: NCIR2 high alarm duty
+    buzzer_frequency:
+      name: NCIR2 buzzer frequency
+    buzzer_duty:
+      name: NCIR2 buzzer duty
+
+switch:
+  - platform: m5_unit_ncir2
+    buzzer:
+      name: NCIR2 buzzer
