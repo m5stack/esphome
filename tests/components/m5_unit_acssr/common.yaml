@@ -1,0 +1,12 @@
+m5_unit_acssr:
+  id: acssr
+
+switch:
+  - platform: m5_unit_acssr
+    relay:
+      name: ACSSR relay
+      restore_mode: RESTORE_DEFAULT_OFF
+
+light:
+  - platform: m5_unit_acssr
+    name: ACSSR LED
