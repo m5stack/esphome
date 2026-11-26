@@ -10,6 +10,7 @@ ESPHOME_LOG_TAG(TAG, "ftservo");
 static constexpr uint16_t STEPS_PER_REVOLUTION = 1024;
 static constexpr uint32_t MOVE_SLACK_MS = 500;
 static constexpr uint32_t REQUEST_TIMEOUT_MS = 1000;
+static constexpr float ANGLE_DEADBAND_DEGREES = 1.0f;
 
 PROGMEM_STRING_TABLE(ServoStateString, "IDLE", "MOVING", "HOLDING", "STALLED", "ERROR");
 
@@ -96,6 +97,11 @@ bool FTServo::move_to(int position, uint16_t speed, uint16_t time) {
   this->motion_error_ = SERVO_ERROR_NONE;
   this->state_ = ServoState::SERVO_STATE_MOVING;
   this->move_deadline_ms_ = now + this->estimate_move_time_(target, speed, time) + MOVE_SLACK_MS;
+#ifdef USE_NUMBER
+  // The angle number is a control, not a progress display: hold the commanded
+  // angle until the move finishes instead of jumping to the old measured angle.
+  this->publish_angle_number_(this->position_to_angle_(target), true);
+#endif
   this->update_errors_();
   this->on_move_.call();
   return true;
@@ -145,6 +151,11 @@ void FTServo::stop() {
   this->motion_error_ = SERVO_ERROR_NONE;
   this->update_errors_();
   if (was_moving) {
+#ifdef USE_NUMBER
+    // The move is over; snap the control to the measured value so a later
+    // manual nudge starts from where the head actually is.
+    this->publish_angle_number_(this->position_to_angle_(this->feedback_.position), true);
+#endif
     this->on_move_done_.call();
   }
 }
@@ -263,7 +274,12 @@ void FTServo::publish_feedback_() {
 #ifdef USE_NUMBER
   if (this->capabilities_ & SERVO_CAPABILITIES_POSITION) {
     PUBLISH_STATE(this->position_number_, static_cast<float>(feedback.position));
-    PUBLISH_STATE(this->angle_number_, this->position_to_angle_(feedback.position));
+    // While moving, the angle number keeps the commanded target set by
+    // move_to(); publishing the intermediate feedback makes the control chase
+    // the servo and adds a large jump at the start and end of every move.
+    if (this->state_ != ServoState::SERVO_STATE_MOVING) {
+      this->publish_angle_number_(this->position_to_angle_(feedback.position), false);
+    }
   } else {
     PUBLISH_STATE(this->position_number_, NAN);
     PUBLISH_STATE(this->angle_number_, NAN);
@@ -271,12 +287,31 @@ void FTServo::publish_feedback_() {
 #endif
 }
 
+#ifdef USE_NUMBER
+void FTServo::publish_angle_number_(float angle, bool force) {
+  if (this->angle_number_ == nullptr || std::isnan(angle)) {
+    return;
+  }
+  if (!force && !std::isnan(this->last_published_angle_) &&
+      std::fabs(angle - this->last_published_angle_) < ANGLE_DEADBAND_DEGREES) {
+    return;
+  }
+  this->last_published_angle_ = angle;
+  this->angle_number_->publish_state(std::round(angle));
+}
+#endif
+
 void FTServo::complete_move_() {
   const bool was_moving = this->state_ == ServoState::SERVO_STATE_MOVING;
   this->motion_error_ = SERVO_ERROR_NONE;
   this->state_ = ServoState::SERVO_STATE_HOLDING;
   this->update_errors_();
   if (was_moving) {
+#ifdef USE_NUMBER
+    // The move is over; snap the control to the measured value so a later
+    // manual nudge starts from where the head actually is.
+    this->publish_angle_number_(this->position_to_angle_(this->feedback_.position), true);
+#endif
     this->on_move_done_.call();
   }
   if (this->release_after_move_) {

@@ -1,11 +1,17 @@
 #include <gtest/gtest.h>
 
 #include "esphome/components/ftservo/ftservo.h"
+#include "esphome/components/number/number.h"
 #include "esphome/core/application.h"
 
 namespace esphome::ftservo::testing {
 
 namespace {
+
+class TestNumber : public number::Number {
+ protected:
+  void control(float value) override {}
+};
 
 class TestServo : public FTServo {
  public:
@@ -264,6 +270,61 @@ TEST(FTServoTest, PollsFeedbackAtTheConfiguredInterval) {
     servo.loop();
   }
   EXPECT_EQ(servo.feedback_requests, 2);
+}
+
+TEST(FTServoTest, AngleNumberHoldsTheCommandedAngleWhileMoving) {
+  TestServo servo;
+  TestNumber angle;
+  servo.configure();
+  servo.set_angle_number(&angle);
+
+  ServoFeedback feedback;
+  feedback.position = 500;
+  servo.on_feedback(feedback);
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  ASSERT_TRUE(servo.move_to_angle(30.0f));
+  EXPECT_FLOAT_EQ(angle.state, 30.0f);
+
+  feedback.position = 510;
+  feedback.moving = true;
+  servo.on_feedback(feedback);
+  EXPECT_FLOAT_EQ(angle.state, 30.0f);
+
+  ServoFeedback finished;
+  finished.position = 620;
+  finished.moving = false;
+  servo.on_feedback(finished);
+  EXPECT_EQ(servo.state(), ServoState::SERVO_STATE_HOLDING);
+  EXPECT_FLOAT_EQ(angle.state, 35.0f);
+}
+
+TEST(FTServoTest, AngleNumberRoundsAndFiltersIdleFeedback) {
+  TestServo servo;
+  TestNumber angle;
+  servo.configure();
+  servo.set_angle_number(&angle);
+
+  ServoFeedback feedback;
+  feedback.position = 500;  // 0°
+  servo.on_feedback(feedback);
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  feedback.position = 503;  // 0.88°, inside the deadband
+  servo.on_feedback(feedback);
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  feedback.position = 504;  // 1.17°
+  servo.on_feedback(feedback);
+  EXPECT_FLOAT_EQ(angle.state, 1.0f);
+
+  feedback.position = 505;  // 1.46°, still inside the deadband
+  servo.on_feedback(feedback);
+  EXPECT_FLOAT_EQ(angle.state, 1.0f);
+
+  feedback.position = 511;  // 3.22°
+  servo.on_feedback(feedback);
+  EXPECT_FLOAT_EQ(angle.state, 3.0f);
 }
 
 TEST(FTServoGroupTest, SendsAllGoalsInOneBatch) {

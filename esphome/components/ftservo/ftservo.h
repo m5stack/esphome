@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -170,6 +171,9 @@ class FTServo : public Component {
   uint32_t estimate_move_time_(uint16_t target, uint16_t speed, uint16_t time) const;
   void publish_feedback_();
   void complete_move_();
+#ifdef USE_NUMBER
+  void publish_angle_number_(float angle, bool force);
+#endif
   void update_errors_();
 
   LazyCallbackManager<void()> on_move_{};
@@ -205,6 +209,9 @@ class FTServo : public Component {
   bool inverted_{false};
   bool release_after_move_{false};
   bool restore_pending_{true};
+#ifdef USE_NUMBER
+  float last_published_angle_{NAN};
+#endif
 };
 
 /// One target for a grouped move.

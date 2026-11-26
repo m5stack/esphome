@@ -106,7 +106,6 @@ async def to_code(config: ConfigType) -> None:
             max_value=conf[CONF_MAX_VALUE],
             step=conf[CONF_STEP],
             apply="move_to_angle(value)",
-            publish="on_success",
         )
     if (conf := config.get(CONF_SPEED)) is not None:
         await numbers(

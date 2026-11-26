@@ -1,0 +1,9 @@
+number:
+  # Registers the number component (and its entity counter) for the C++ test
+  # build, which exercises the optional ftservo angle number.
+  - platform: template
+    name: Test number
+    optimistic: true
+    min_value: 0
+    max_value: 10
+    step: 1
