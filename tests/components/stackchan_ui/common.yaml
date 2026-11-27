@@ -1,0 +1,14 @@
+font:
+  - file: ../lvgl/helvetica.ttf
+    id: stackchan_font
+    size: 16
+
+stackchan_ui:
+  id: stackchan_face
+  font_id: stackchan_font
+  on_head_pet:
+    - logger.log: "head pet"
+  on_head_pet_restore:
+    - logger.log: "head pet restore"
+  on_shake:
+    - logger.log: "shake"

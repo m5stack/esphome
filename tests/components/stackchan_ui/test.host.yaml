@@ -1,0 +1,56 @@
+esphome:
+  name: stackchan-ui-test
+
+host:
+
+logger:
+  level: DEBUG
+
+display:
+  - platform: sdl
+    id: sdl_display
+    headless: true
+    dimensions:
+      width: 320
+      height: 240
+
+lvgl:
+  displays: sdl_display
+  rotation: 0
+  widgets: []
+
+packages:
+  stackchan_ui: !include common.yaml
+
+script:
+  - id: exercise_stackchan_ui
+    then:
+      - stackchan_ui.set_emotion: happy
+      - stackchan_ui.set_speech:
+          id: stackchan_face
+          text: "Hello StackChan"
+          duration: 2s
+          speak: true
+      - stackchan_ui.head_pet: stackchan_face
+      - stackchan_ui.head_pet_hold: stackchan_face
+      - stackchan_ui.head_pet_release: stackchan_face
+      - stackchan_ui.shake: stackchan_face
+      - stackchan_ui.start_speaking: stackchan_face
+      - stackchan_ui.stop_speaking: stackchan_face
+      - stackchan_ui.clear_speech: stackchan_face
+
+switch:
+  # Regression test: TemplateSwitch::setup() restores its state before
+  # StackChanUI::setup() runs. The callback must not dereference LVGL objects
+  # that do not exist yet.
+  - platform: template
+    id: restore_stop_speaking
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - stackchan_ui.set_emotion: happy
+      - stackchan_ui.set_speech:
+          id: stackchan_face
+          text: "Pre-setup speech"
+          duration: 1s
+      - stackchan_ui.stop_speaking: stackchan_face
