@@ -54,7 +54,6 @@ async def to_code(config: ConfigType) -> None:
             max_value=conf[CONF_MAX_VALUE],
             step=conf[CONF_STEP],
             apply="set_target_yaw(value)",
-            publish="on_success",
         )
     if (conf := config.get(CONF_PITCH)) is not None:
         await numbers(
@@ -64,5 +63,4 @@ async def to_code(config: ConfigType) -> None:
             max_value=conf[CONF_MAX_VALUE],
             step=conf[CONF_STEP],
             apply="set_target_pitch(value)",
-            publish="on_success",
         )

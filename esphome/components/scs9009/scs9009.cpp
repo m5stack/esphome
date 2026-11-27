@@ -50,7 +50,7 @@ bool SCS9009Component::enqueue_(const Request &request) {
 }
 
 bool SCS9009Component::begin_sync_write() {
-  if (this->sync_write_active_ || this->sync_write_queued_) {
+  if (this->sync_write_active_) {
     return false;
   }
   this->sync_write_active_ = true;
@@ -94,14 +94,10 @@ bool SCS9009Component::end_sync_write() {
     this->sync_write_.count = 0;
     return false;
   }
-  this->sync_write_queued_ = true;
   return true;
 }
 
 void SCS9009Component::abort_sync_write() {
-  if (this->sync_write_queued_) {
-    return;  // the frame is already in the queue and cannot be cancelled
-  }
   this->sync_write_active_ = false;
   this->sync_write_.count = 0;
 }
@@ -164,13 +160,11 @@ void SCS9009Component::loop() {
         return;
       }
       if (result == SCSFrameResult::SCS_FRAME_RESULT_INVALID) {
-        this->discard_available();
-        if (this->active_.sync) {
-          this->finish_sync_read_(false, ftservo::SERVO_ERROR_CHECKSUM, now);
-        } else {
-          this->finish_request_(false, ftservo::SERVO_ERROR_CHECKSUM, now);
-        }
-        return;
+        // A bad header or a failed checksum is not the end of the transaction: the rest of
+        // the response may still be arriving. Keep the parser aligned and let the response
+        // timeout decide, so one stray byte does not throw away a whole frame.
+        this->parser_.reset();
+        continue;
       }
     }
     if (now - this->sent_ms_ > this->timeout_ms_) {
@@ -228,6 +222,7 @@ void SCS9009Component::start_request_(uint32_t now) {
   }
 
   this->tx_length_ = static_cast<uint8_t>(frame_len);
+  this->discard_rx_();
   this->write_array(this->tx_frame_, frame_len);
   const uart::UARTFlushResult flush_result = this->flush();
   if (flush_result == uart::UARTFlushResult::UART_FLUSH_RESULT_TIMEOUT ||
@@ -261,6 +256,7 @@ void SCS9009Component::start_sync_write_(uint32_t now) {
   }
 
   this->tx_length_ = static_cast<uint8_t>(frame_len);
+  this->discard_rx_();
   this->write_array(this->tx_frame_, frame_len);
   const uart::UARTFlushResult flush_result = this->flush();
   if (flush_result == uart::UARTFlushResult::UART_FLUSH_RESULT_TIMEOUT ||
@@ -289,6 +285,7 @@ void SCS9009Component::start_sync_read_(uint32_t now) {
   }
 
   this->tx_length_ = static_cast<uint8_t>(frame_len);
+  this->discard_rx_();
   this->write_array(this->tx_frame_, frame_len);
   const uart::UARTFlushResult flush_result = this->flush();
   if (flush_result == uart::UARTFlushResult::UART_FLUSH_RESULT_TIMEOUT ||
@@ -373,7 +370,6 @@ void SCS9009Component::finish_sync_write_(bool ok, uint8_t error, uint32_t now) 
     }
   }
   this->sync_write_.count = 0;
-  this->sync_write_queued_ = false;
 }
 
 void SCS9009Component::finish_sync_read_(bool ok, uint8_t error, uint32_t now) {
@@ -406,6 +402,15 @@ void SCS9009Component::finish_request_(bool ok, uint8_t error, uint32_t now) {
   } else {
     servo->on_scs_write(ok, error);
   }
+}
+
+void SCS9009Component::discard_rx_() {
+  // The servos answer one request at a time, so whatever is still in the receive buffer
+  // belongs to an earlier frame: a transceiver echo, or a response that arrived after its
+  // timeout. Keeping it would make the next response parse out of step, which is what turns
+  // one missed frame into a run of checksum and length errors. The reference driver drains
+  // the buffer the same way before every request.
+  this->discard_available();
 }
 
 bool SCS9009Component::is_echo_() const {

@@ -383,9 +383,24 @@ TEST(SCS9009BusTest, GroupMoveSendsOneSyncWrite) {
   ASSERT_TRUE(group.add_servo(&first));
   ASSERT_TRUE(group.add_servo(&second));
 
-  const ftservo::ServoGoal goals[2] = {{600, 500, 0}, {700, 500, 0}};
+  // A move enables the torque of its axes first, so take those frames off the bus
+  // before the grouped move itself goes out.
   {
     LoopBlockingGuard clock{&bus, LOG_STR("test"), 1000};
+    ASSERT_TRUE(first.set_torque(true));
+    ASSERT_TRUE(second.set_torque(true));
+    bus.loop();
+  }
+  uart.tx.clear();
+  {
+    LoopBlockingGuard clock{&bus, LOG_STR("test"), 1010};
+    bus.loop();
+  }
+  uart.tx.clear();
+
+  const ftservo::ServoGoal goals[2] = {{600, 500, 0}, {700, 500, 0}};
+  {
+    LoopBlockingGuard clock{&bus, LOG_STR("test"), 1020};
     ASSERT_TRUE(group.move_to(goals, 2));
     bus.loop();
   }

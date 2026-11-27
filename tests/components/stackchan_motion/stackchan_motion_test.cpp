@@ -2,12 +2,18 @@
 
 #include <cmath>
 
+#include "esphome/components/number/number.h"
 #include "esphome/components/stackchan_motion/stackchan_motion.h"
 #include "esphome/core/application.h"
 
 namespace esphome::stackchan_motion::testing {
 
 namespace {
+
+class TestNumber : public number::Number {
+ protected:
+  void control(float value) override {}
+};
 
 class TestServo : public ftservo::FTServo {
  public:
@@ -47,6 +53,9 @@ class TestServo : public ftservo::FTServo {
     feedback.position = static_cast<uint16_t>(lroundf(500.0f + degrees * 1024.0f / 300.0f));
     this->on_feedback(feedback);
   }
+
+  /// Reports the axis as arrived, which ends a move that is running on it.
+  void arrive(float degrees) { this->report(degrees); }
 
   int goals{0};
   uint16_t last_position{0};
@@ -220,6 +229,77 @@ TEST(StackchanMotionTest, SingleAxisTargetsKeepTheOtherAxis) {
   EXPECT_FLOAT_EQ(f.head.target_pitch(), 5.0f);
 }
 
+TEST(StackchanMotionTest, PoseNumbersFollowAnIdleHead) {
+  Fixture f;
+  f.init();
+  TestNumber yaw_number;
+  TestNumber pitch_number;
+  yaw_number.traits.set_step(1.0f);
+  yaw_number.traits.set_min_value(-60.0f);
+  yaw_number.traits.set_max_value(60.0f);
+  pitch_number.traits.set_step(1.0f);
+  pitch_number.traits.set_min_value(-30.0f);
+  pitch_number.traits.set_max_value(30.0f);
+  {
+    LoopBlockingGuard clock{&f.head, LOG_STR("test"), 1000};
+    f.head.setup();
+    f.head.set_yaw_number(&yaw_number);
+    f.head.set_pitch_number(&pitch_number);
+  }
+
+  // A head that is pushed by hand is followed sample by sample, and the pose
+  // becomes the new target.
+  f.yaw.report(20.0f);
+  f.pitch.report(15.0f);
+  EXPECT_FLOAT_EQ(yaw_number.state, 20.0f);
+  EXPECT_FLOAT_EQ(pitch_number.state, 15.0f);
+  // One step covers 300/1024 degrees, so the adopted pose is within one step.
+  EXPECT_NEAR(f.head.target_yaw(), 20.0f, 0.1f);
+  EXPECT_NEAR(f.head.target_pitch(), 15.0f, 0.1f);
+}
+
+TEST(StackchanMotionTest, NudgeStartsFromTheMeasuredPose) {
+  Fixture f;
+  f.init();
+  {
+    LoopBlockingGuard clock{&f.head, LOG_STR("test"), 1000};
+    f.head.setup();
+  }
+  // Home finished, then the head was moved by hand.
+  f.yaw.arrive(10.0f);
+  f.pitch.arrive(-10.0f);
+  f.yaw.report(20.0f);
+  f.pitch.report(15.0f);
+
+  {
+    LoopBlockingGuard clock{&f.head, LOG_STR("test"), 1001};
+    ASSERT_TRUE(f.head.nudge(5.0f, -5.0f));
+  }
+  EXPECT_NEAR(f.head.target_yaw(), 25.0f, 0.1f);
+  EXPECT_NEAR(f.head.target_pitch(), 10.0f, 0.1f);
+}
+
+TEST(StackchanMotionTest, SingleAxisTargetsKeepTheMeasuredPoseOfTheOtherAxis) {
+  Fixture f;
+  f.init();
+  {
+    LoopBlockingGuard clock{&f.head, LOG_STR("test"), 1000};
+    f.head.setup();
+    ASSERT_TRUE(f.head.home());
+  }
+  f.yaw.arrive(10.0f);
+  f.pitch.arrive(-10.0f);
+  f.yaw.report(20.0f);
+  f.pitch.report(15.0f);
+
+  {
+    LoopBlockingGuard clock{&f.head, LOG_STR("test"), 1001};
+    ASSERT_TRUE(f.head.set_target_yaw(25.0f));
+  }
+  EXPECT_FLOAT_EQ(f.head.target_yaw(), 25.0f);
+  EXPECT_NEAR(f.head.target_pitch(), 15.0f, 0.1f);  // where the head actually is
+}
+
 TEST(StackchanMotionTest, IsMovingFollowsEitherAxis) {
   Fixture f;
   f.init();
@@ -230,8 +310,8 @@ TEST(StackchanMotionTest, IsMovingFollowsEitherAxis) {
   }
   EXPECT_TRUE(f.head.is_moving());
 
-  f.yaw.report(0.0f);
-  f.pitch.report(0.0f);
+  f.yaw.arrive(30.0f);
+  f.pitch.arrive(0.0f);
   EXPECT_FALSE(f.head.is_moving());
 }
 

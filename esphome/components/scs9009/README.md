@@ -101,6 +101,13 @@ A SYNC WRITE is a broadcast, so the servos do not acknowledge it; a missing serv
 through the next feedback read. A SYNC READ fails the servos that did not answer within `timeout`
 and reports the error through their `on_error` trigger.
 
+The bus talks to one servo at a time: a request is written, its response is parsed without
+blocking, and the next request follows. Before every frame the receive buffer is drained, so an
+echo from the transceiver or a response that arrived after its timeout cannot shift the next
+response out of step — that is what turns a single missed frame into a run of checksum and length
+errors. A frame that fails its checksum or header is dropped on its own and the parser keeps
+looking for a valid one until the timeout, instead of discarding the whole transaction.
+
 ## Memory map used
 
 | Register | Address | Description |

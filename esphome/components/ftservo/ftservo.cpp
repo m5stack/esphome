@@ -11,11 +11,41 @@ ESPHOME_LOG_TAG(TAG, "ftservo");
 
 static constexpr uint16_t STEPS_PER_REVOLUTION = 1024;
 static constexpr uint32_t MOVE_SLACK_MS = 500;
-static constexpr uint32_t REQUEST_TIMEOUT_MS = 1000;
-static constexpr uint16_t FEEDBACK_STABLE_STEPS = 3;
+static constexpr uint16_t MOVE_TOLERANCE_STEPS = 8;
 static constexpr float MIN_ANGLE_DEADBAND_DEGREES = 2.0f;
 
 PROGMEM_STRING_TABLE(ServoStateString, "IDLE", "MOVING", "HOLDING", "STALLED", "ERROR");
+
+#ifdef USE_NUMBER
+void publish_angle_state(number::Number *number, float angle, float &last_published, bool force) {
+  if (number == nullptr || std::isnan(angle)) {
+    return;
+  }
+  float step = number->traits.get_step();
+  if (!std::isfinite(step) || step <= 0.0f) {
+    step = 1.0f;
+  }
+  float quantized = std::round(angle / step) * step;
+  const float min_value = number->traits.get_min_value();
+  const float max_value = number->traits.get_max_value();
+  if (std::isfinite(min_value) && std::isfinite(max_value)) {
+    // The step may not divide the configured range; keep the published value
+    // inside it so the UI never shows an out-of-range angle.
+    quantized = std::clamp(quantized, min_value, max_value);
+  }
+  if (!force && !std::isnan(last_published)) {
+    // Compare the measured angle with the displayed value, not with the
+    // quantized one: a raw value hovering at a step boundary would otherwise
+    // alternate between two adjacent steps.
+    const float deadband = std::max(step, MIN_ANGLE_DEADBAND_DEGREES);
+    if (std::fabs(angle - last_published) < deadband) {
+      return;
+    }
+  }
+  last_published = quantized;
+  number->publish_state(quantized);
+}
+#endif
 
 void FTServo::setup() {
   if (this->range_degrees_ <= 0.0f) {
@@ -44,14 +74,9 @@ void FTServo::loop() {
 #endif
   }
 
-  if (this->awaiting_feedback_) {
-    if (now - this->request_started_ms_ > REQUEST_TIMEOUT_MS) {
-      this->on_feedback_failed(SERVO_ERROR_NO_REPLY);
-    }
-  } else if (now - this->last_poll_ms_ >= this->update_interval_ms_) {
+  if (!this->awaiting_feedback_ && now - this->last_poll_ms_ >= this->update_interval_ms_) {
     if (this->request_feedback_()) {
       this->last_poll_ms_ = now;
-      this->request_started_ms_ = now;
       this->awaiting_feedback_ = true;
     }
   }
@@ -93,21 +118,26 @@ bool FTServo::move_to(int position, uint16_t speed, uint16_t time) {
   speed = std::min<uint16_t>(std::max<uint16_t>(speed == 0 ? this->default_speed_ : speed, 1), this->max_speed_);
   time = std::min<uint16_t>(time == 0 ? this->default_time_ : time, this->max_time_);
 
+  // A goal on its own does not give the servo hold torque: after `release_after_move` (or an
+  // explicit release) the axis only crawls towards the goal and stops half way. Enabling it
+  // first, in the same queue, makes the move the servo was asked for.
+  if (!this->torque_enabled_ && this->write_torque_(true)) {
+    this->torque_enabled_ = true;
+  }
+
   if (!this->write_goal_(target, speed, time)) {
     ESP_LOGW(TAG, "Failed to send the goal position %u", target);
     return false;
   }
 
   const uint32_t now = App.get_loop_component_start_time();
-  this->torque_enabled_ = true;  // writing a goal enables the torque output
+  this->goal_position_ = target;
   this->motion_error_ = SERVO_ERROR_NONE;
   this->state_ = ServoState::SERVO_STATE_MOVING;
   this->move_deadline_ms_ = now + this->estimate_move_time_(target, speed, time) + MOVE_SLACK_MS;
 #ifdef USE_NUMBER
   // The angle number is a control, not a progress display: hold the commanded
   // angle until the move finishes instead of jumping to the old measured angle.
-  this->feedback_window_count_ = 0;
-  this->feedback_window_index_ = 0;
   this->publish_angle_number_(this->position_to_angle_(target), true);
 #endif
   this->update_errors_();
@@ -151,17 +181,17 @@ void FTServo::stop() {
     return;
   }
   const bool was_moving = this->state_ == ServoState::SERVO_STATE_MOVING;
+  if (!this->torque_enabled_ && this->write_torque_(true)) {
+    this->torque_enabled_ = true;
+  }
   if (!this->write_goal_(this->feedback_.position, 0, 0)) {
     ESP_LOGW(TAG, "Failed to send the stop command");
     return;
   }
+  this->goal_position_ = this->feedback_.position;
   this->state_ = ServoState::SERVO_STATE_HOLDING;
   this->motion_error_ = SERVO_ERROR_NONE;
   this->update_errors_();
-#ifdef USE_NUMBER
-  this->feedback_window_count_ = 0;
-  this->feedback_window_index_ = 0;
-#endif
   if (was_moving) {
     this->on_move_done_.call();
   }
@@ -174,16 +204,23 @@ void FTServo::on_feedback(const ServoFeedback &feedback) {
   this->comm_error_ = SERVO_ERROR_NONE;
   this->status_error_ = feedback.error;
   this->publish_feedback_();
-  this->on_feedback_.call();
 
   if (this->state_ == ServoState::SERVO_STATE_ERROR) {
     this->state_ = this->torque_enabled_ ? ServoState::SERVO_STATE_HOLDING : ServoState::SERVO_STATE_IDLE;
   }
-  if (this->state_ == ServoState::SERVO_STATE_MOVING && (this->capabilities_ & SERVO_CAPABILITIES_MOVING) &&
-      !feedback.moving) {
+  if (this->state_ == ServoState::SERVO_STATE_MOVING && this->reached_goal_()) {
+    // Only the goal ends a move. Neither the moving bit nor a still sample can: these servos
+    // drop the bit for a sample or two while accelerating, and an axis climbing against
+    // gravity moves less than a step per read, so both look like "finished" long before the
+    // head is where it was sent. Ending the move then released the torque, which is what
+    // stopped long moves half way. A move that really cannot reach its goal is caught by the
+    // deadline, which reports a stall.
     this->complete_move_();
   }
   this->update_errors_();
+  // Subscribers see the state this sample produced, so a move that ended with it
+  // is already finished when they read the servo.
+  this->on_feedback_.call();
 }
 
 void FTServo::on_feedback_failed(ServoErrorMask error) {
@@ -281,11 +318,13 @@ void FTServo::publish_feedback_() {
 #ifdef USE_NUMBER
   if (this->capabilities_ & SERVO_CAPABILITIES_POSITION) {
     PUBLISH_STATE(this->position_number_, static_cast<float>(feedback.position));
-    // While moving, the angle number keeps the commanded target set by
-    // move_to(). Idle feedback is only applied once it has been stable for a
-    // few samples, so a hand-moved head updates the control without jitter.
+    // While a move runs, the angle number keeps the commanded target set by
+    // move_to(). Otherwise every sample is applied: with the torque released
+    // the control is the only readback of an axis that is pushed by hand, and
+    // buffering samples makes it freeze while the head moves and then jump once
+    // it stops.
     if (this->state_ != ServoState::SERVO_STATE_MOVING && this->angle_follow_feedback_) {
-      this->publish_feedback_angle_(feedback.position);
+      this->publish_angle_number_(this->position_to_angle_(feedback.position), false);
     }
   } else {
     PUBLISH_STATE(this->position_number_, NAN);
@@ -296,64 +335,29 @@ void FTServo::publish_feedback_() {
 
 #ifdef USE_NUMBER
 void FTServo::publish_angle_number_(float angle, bool force) {
-  if (this->angle_number_ == nullptr || std::isnan(angle)) {
-    return;
-  }
-  float step = this->angle_number_->traits.get_step();
-  if (!std::isfinite(step) || step <= 0.0f) {
-    step = 1.0f;
-  }
-  float quantized = std::round(angle / step) * step;
-  const float min_value = this->angle_number_->traits.get_min_value();
-  const float max_value = this->angle_number_->traits.get_max_value();
-  if (std::isfinite(min_value) && std::isfinite(max_value)) {
-    // The step may not divide the configured range; keep the published value
-    // inside it so the UI never shows an out-of-range angle.
-    quantized = std::clamp(quantized, min_value, max_value);
-  }
-  if (!force && !std::isnan(this->last_published_angle_)) {
-    const float deadband = std::max(step, MIN_ANGLE_DEADBAND_DEGREES);
-    // Compare the measured angle with the displayed value, not with the
-    // quantized one: a raw value hovering at a step boundary would otherwise
-    // alternate between two adjacent steps.
-    if (std::fabs(angle - this->last_published_angle_) < deadband) {
-      return;
-    }
-  }
-  this->last_published_angle_ = quantized;
-  this->angle_number_->publish_state(quantized);
-}
-
-void FTServo::publish_feedback_angle_(uint16_t position) {
-  if (this->angle_number_ == nullptr) {
-    return;
-  }
-  this->feedback_window_[this->feedback_window_index_] = position;
-  this->feedback_window_index_ = static_cast<uint8_t>((this->feedback_window_index_ + 1) % FEEDBACK_WINDOW_SIZE);
-  if (this->feedback_window_count_ < FEEDBACK_WINDOW_SIZE) {
-    this->feedback_window_count_++;
-  }
-  if (this->feedback_window_count_ < FEEDBACK_WINDOW_SIZE) {
-    return;
-  }
-  const uint16_t a = this->feedback_window_[0];
-  const uint16_t b = this->feedback_window_[1];
-  const uint16_t c = this->feedback_window_[2];
-  const uint16_t min = std::min(a, std::min(b, c));
-  const uint16_t max = std::max(a, std::max(b, c));
-  if (max - min > FEEDBACK_STABLE_STEPS) {
-    return;
-  }
-  const uint16_t median = a + b + c - min - max;
-  this->publish_angle_number_(this->position_to_angle_(median), false);
+  publish_angle_state(this->angle_number_, angle, this->last_published_angle_, force);
 }
 #endif
+
+bool FTServo::reached_goal_() const {
+  const int position = static_cast<int>(this->feedback_.position);
+  const int goal = static_cast<int>(this->goal_position_);
+  return (position > goal ? position - goal : goal - position) <= MOVE_TOLERANCE_STEPS;
+}
 
 void FTServo::complete_move_() {
   const bool was_moving = this->state_ == ServoState::SERVO_STATE_MOVING;
   this->motion_error_ = SERVO_ERROR_NONE;
   this->state_ = ServoState::SERVO_STATE_HOLDING;
   this->update_errors_();
+#ifdef USE_NUMBER
+  // The control held the commanded angle for the whole move. Now that the axis
+  // is idle it may show what the servo actually reached, so a head that stopped
+  // short does not keep the slider on a pose it never had.
+  if (this->angle_follow_feedback_) {
+    this->publish_angle_number_(this->position_to_angle_(this->feedback_.position), false);
+  }
+#endif
   if (was_moving) {
     this->on_move_done_.call();
   }
@@ -366,7 +370,11 @@ void FTServo::update_errors_() {
   const ServoErrorMask effective = this->comm_error_ | this->status_error_ | this->motion_error_;
   if ((effective & ~this->reported_errors_) != 0) {
     if (this->comm_error_ != SERVO_ERROR_NONE) {
+      // The mask says which failure it was: 1 no reply, 2 checksum, 4 address, 8 length.
+      ESP_LOGW(TAG, "Communication error 0x%02X", static_cast<unsigned>(this->comm_error_));
       this->status_set_warning(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+    } else if (this->motion_error_ != SERVO_ERROR_NONE) {
+      this->status_set_warning(LOG_STR("Servo did not reach its goal in time"));
     } else {
       this->status_set_warning(LOG_STR("Servo reported an error"));
     }

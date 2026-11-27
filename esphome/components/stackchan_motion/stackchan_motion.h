@@ -33,6 +33,10 @@ struct Direction {
  *
  * Angles are in degrees and measured from the servo calibration, so 0° on both axes points along
  * +Y. Yaw turns right for positive angles, pitch looks up.
+ *
+ * The targets track the head: while an axis is idle its measured angle becomes the target, so a
+ * head that was pushed by hand is where the next relative move starts from instead of snapping
+ * back to a pose the servos never reached.
  */
 class StackchanMotion final : public Component {
  public:
@@ -101,9 +105,14 @@ class StackchanMotion final : public Component {
 #endif
 
  protected:
+  /// Publishes the sensors and the pose numbers from the cached servo feedback.
+  void publish_feedback_();
 #ifdef USE_SENSOR
-  void publish_state_();
-  void publish_angles_(ftservo::FTServo *servo, sensor::Sensor *degrees);
+  void publish_angle_sensor_(ftservo::FTServo *servo, sensor::Sensor *degrees);
+#endif
+#ifdef USE_NUMBER
+  void publish_pose_numbers_(float yaw, float pitch);
+  void follow_axis_(ftservo::FTServo *servo, number::Number *number, float &target, float &last_published);
 #endif
 
   ftservo::ServoBatch batch_{};
@@ -119,6 +128,10 @@ class StackchanMotion final : public Component {
   float nudge_step_{10.0f};
   float target_yaw_{0.0f};
   float target_pitch_{0.0f};
+#ifdef USE_NUMBER
+  float last_published_yaw_{NAN};
+  float last_published_pitch_{NAN};
+#endif
   uint16_t default_speed_{0};
   uint16_t default_time_{0};
 };

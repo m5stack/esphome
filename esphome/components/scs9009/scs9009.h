@@ -91,6 +91,7 @@ class SCS9009Component : public uart::UARTDevice, public Component {
   void finish_sync_write_(bool ok, uint8_t error, uint32_t now);
   void finish_sync_read_(bool ok, uint8_t error, uint32_t now);
   bool is_echo_() const;
+  void discard_rx_();
 
   StaticRingBuffer<Request, MAX_PENDING> pending_{};
   Request active_{};
@@ -106,7 +107,6 @@ class SCS9009Component : public uart::UARTDevice, public Component {
   bool request_active_{false};
   bool waiting_response_{false};
   bool sync_write_active_{false};
-  bool sync_write_queued_{false};
   bool sync_read_queued_{false};
 };
 

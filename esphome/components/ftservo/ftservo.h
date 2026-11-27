@@ -22,6 +22,16 @@
 
 namespace esphome::ftservo {
 
+#ifdef USE_NUMBER
+/**
+ * Publishes a measured angle to a number control. The value is quantized to the control's own
+ * step, and it is only written once the measurement left the displayed value by at least one
+ * deadband, so a measurement that sits on a step boundary does not flip the displayed value back
+ * and forth. `last_published` is the state of the call and starts as NAN.
+ */
+void publish_angle_state(number::Number *number, float angle, float &last_published, bool force);
+#endif
+
 /// Motion state of one servo. Errors are reported separately as a bit mask.
 enum class ServoState : uint8_t {
   SERVO_STATE_IDLE,
@@ -173,10 +183,10 @@ class FTServo : public Component {
   uint16_t angle_to_position_(float degrees) const;
   uint32_t estimate_move_time_(uint16_t target, uint16_t speed, uint16_t time) const;
   void publish_feedback_();
+  bool reached_goal_() const;
   void complete_move_();
 #ifdef USE_NUMBER
   void publish_angle_number_(float angle, bool force);
-  void publish_feedback_angle_(uint16_t position);
 #endif
   void update_errors_();
 
@@ -187,7 +197,6 @@ class FTServo : public Component {
 
   uint32_t update_interval_ms_{200};
   uint32_t last_poll_ms_{0};
-  uint32_t request_started_ms_{0};
   uint32_t move_deadline_ms_{0};
 
   float range_degrees_{360.0f};
@@ -200,6 +209,7 @@ class FTServo : public Component {
   uint16_t max_time_{9999};
   uint16_t default_speed_{500};
   uint16_t default_time_{0};
+  uint16_t goal_position_{0};
 
   ServoState state_{ServoState::SERVO_STATE_IDLE};
   ServoCapabilities capabilities_{SERVO_CAPABILITIES_DEFAULT};
@@ -214,12 +224,8 @@ class FTServo : public Component {
   bool release_after_move_{false};
   bool restore_pending_{true};
 #ifdef USE_NUMBER
-  static constexpr size_t FEEDBACK_WINDOW_SIZE = 3;
   bool angle_follow_feedback_{true};
   float last_published_angle_{NAN};
-  uint16_t feedback_window_[FEEDBACK_WINDOW_SIZE]{};
-  uint8_t feedback_window_count_{0};
-  uint8_t feedback_window_index_{0};
 #endif
 };
 

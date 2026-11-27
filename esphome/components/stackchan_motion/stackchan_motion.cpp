@@ -38,9 +38,9 @@ void StackchanMotion::setup() {
     return;
   }
 
-#ifdef USE_SENSOR
-  this->yaw_servo_->add_on_feedback_callback([this]() { this->publish_state_(); });
-  this->pitch_servo_->add_on_feedback_callback([this]() { this->publish_state_(); });
+#if defined(USE_SENSOR) || defined(USE_NUMBER)
+  this->yaw_servo_->add_on_feedback_callback([this]() { this->publish_feedback_(); });
+  this->pitch_servo_->add_on_feedback_callback([this]() { this->publish_feedback_(); });
 #endif
 }
 
@@ -75,6 +75,11 @@ bool StackchanMotion::look_at(float yaw, float pitch, uint16_t speed, uint16_t t
 
   this->target_yaw_ = yaw;
   this->target_pitch_ = pitch;
+#ifdef USE_NUMBER
+  // The pose numbers are controls: show the pose the head is heading for, and
+  // let the idle feedback below replace it once the move is over.
+  this->publish_pose_numbers_(yaw, pitch);
+#endif
   return true;
 }
 
@@ -138,22 +143,51 @@ Direction StackchanMotion::direction() const {
 }
 
 #ifdef USE_SENSOR
-void StackchanMotion::publish_angles_(ftservo::FTServo *servo, sensor::Sensor *degrees) {
+void StackchanMotion::publish_angle_sensor_(ftservo::FTServo *servo, sensor::Sensor *degrees) {
   if (servo == nullptr) {
     return;
   }
   PUBLISH_STATE(degrees, servo->current_angle());
 }
+#endif
 
-void StackchanMotion::publish_state_() {
-  this->publish_angles_(this->yaw_servo_, this->yaw_sensor_);
-  this->publish_angles_(this->pitch_servo_, this->pitch_sensor_);
+#ifdef USE_NUMBER
+void StackchanMotion::publish_pose_numbers_(float yaw, float pitch) {
+  ftservo::publish_angle_state(this->yaw_number_, yaw, this->last_published_yaw_, false);
+  ftservo::publish_angle_state(this->pitch_number_, pitch, this->last_published_pitch_, false);
+}
+
+void StackchanMotion::follow_axis_(ftservo::FTServo *servo, number::Number *number, float &target,
+                                   float &last_published) {
+  if (servo == nullptr || servo->is_moving()) {
+    // A move owns the axis: the control keeps the pose it was commanded to.
+    return;
+  }
+  const float measured = servo->current_angle();
+  if (std::isnan(measured)) {
+    return;
+  }
+  // A head that was pushed by hand is not where the last target says it is. While the axis is
+  // idle the measurement is the pose, so relative moves and the control both start from it.
+  target = measured;
+  ftservo::publish_angle_state(number, measured, last_published, false);
+}
+#endif
+
+void StackchanMotion::publish_feedback_() {
+#ifdef USE_SENSOR
+  this->publish_angle_sensor_(this->yaw_servo_, this->yaw_sensor_);
+  this->publish_angle_sensor_(this->pitch_servo_, this->pitch_sensor_);
 
   const Direction dir = this->direction();
   PUBLISH_STATE(this->direction_x_sensor_, dir.x);
   PUBLISH_STATE(this->direction_y_sensor_, dir.y);
   PUBLISH_STATE(this->direction_z_sensor_, dir.z);
-}
 #endif
+#ifdef USE_NUMBER
+  this->follow_axis_(this->yaw_servo_, this->yaw_number_, this->target_yaw_, this->last_published_yaw_);
+  this->follow_axis_(this->pitch_servo_, this->pitch_number_, this->target_pitch_, this->last_published_pitch_);
+#endif
+}
 
 }  // namespace esphome::stackchan_motion
