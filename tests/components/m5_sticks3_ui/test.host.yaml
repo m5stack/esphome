@@ -1,0 +1,23 @@
+esphome:
+  name: m5-sticks3-ui-test
+
+host:
+
+logger:
+  level: DEBUG
+
+display:
+  - platform: sdl
+    id: sdl_display
+    headless: true
+    dimensions:
+      width: 135
+      height: 240
+
+lvgl:
+  displays: sdl_display
+  rotation: 0
+  widgets: []
+
+packages:
+  m5_sticks3_ui: !include common.yaml
