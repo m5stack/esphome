@@ -73,6 +73,19 @@ class TestServo : public FTServo {
   int group_aborts{0};
 };
 
+void feed_feedback(TestServo &servo, uint16_t position, bool moving = false) {
+  ServoFeedback feedback;
+  feedback.position = position;
+  feedback.moving = moving;
+  servo.on_feedback(feedback);
+}
+
+void feed_stable_feedback(TestServo &servo, uint16_t position, int samples = 3) {
+  for (int i = 0; i < samples; i++) {
+    feed_feedback(servo, position);
+  }
+}
+
 }  // namespace
 
 TEST(FTServoTest, ConvertsBetweenStepsAndDegrees) {
@@ -275,56 +288,123 @@ TEST(FTServoTest, PollsFeedbackAtTheConfiguredInterval) {
 TEST(FTServoTest, AngleNumberHoldsTheCommandedAngleWhileMoving) {
   TestServo servo;
   TestNumber angle;
+  angle.traits.set_step(1.0f);
   servo.configure();
   servo.set_angle_number(&angle);
 
-  ServoFeedback feedback;
-  feedback.position = 500;
-  servo.on_feedback(feedback);
+  feed_stable_feedback(servo, 500);
   EXPECT_FLOAT_EQ(angle.state, 0.0f);
 
   ASSERT_TRUE(servo.move_to_angle(30.0f));
   EXPECT_FLOAT_EQ(angle.state, 30.0f);
 
-  feedback.position = 510;
-  feedback.moving = true;
-  servo.on_feedback(feedback);
+  feed_feedback(servo, 510, true);
   EXPECT_FLOAT_EQ(angle.state, 30.0f);
 
-  ServoFeedback finished;
-  finished.position = 620;
-  finished.moving = false;
-  servo.on_feedback(finished);
+  // The move completes, but the control keeps the target until idle feedback
+  // has been stable for a full window.
+  feed_feedback(servo, 620);
   EXPECT_EQ(servo.state(), ServoState::SERVO_STATE_HOLDING);
+  EXPECT_FLOAT_EQ(angle.state, 30.0f);
+
+  feed_stable_feedback(servo, 620);
   EXPECT_FLOAT_EQ(angle.state, 35.0f);
 }
 
-TEST(FTServoTest, AngleNumberRoundsAndFiltersIdleFeedback) {
+TEST(FTServoTest, AngleNumberWaitsForStableIdleFeedback) {
   TestServo servo;
   TestNumber angle;
+  angle.traits.set_step(1.0f);
   servo.configure();
   servo.set_angle_number(&angle);
 
-  ServoFeedback feedback;
-  feedback.position = 500;  // 0°
-  servo.on_feedback(feedback);
+  feed_feedback(servo, 511);
+  feed_feedback(servo, 511);
   EXPECT_FLOAT_EQ(angle.state, 0.0f);
 
-  feedback.position = 503;  // 0.88°, inside the deadband
-  servo.on_feedback(feedback);
-  EXPECT_FLOAT_EQ(angle.state, 0.0f);
-
-  feedback.position = 504;  // 1.17°
-  servo.on_feedback(feedback);
-  EXPECT_FLOAT_EQ(angle.state, 1.0f);
-
-  feedback.position = 505;  // 1.46°, still inside the deadband
-  servo.on_feedback(feedback);
-  EXPECT_FLOAT_EQ(angle.state, 1.0f);
-
-  feedback.position = 511;  // 3.22°
-  servo.on_feedback(feedback);
+  feed_feedback(servo, 511);
   EXPECT_FLOAT_EQ(angle.state, 3.0f);
+
+  // A changing window must not move the control.
+  feed_feedback(servo, 500);
+  feed_feedback(servo, 520);
+  feed_feedback(servo, 540);
+  EXPECT_FLOAT_EQ(angle.state, 3.0f);
+}
+
+TEST(FTServoTest, AngleNumberIgnoresIdleChangesBelowTheDeadband) {
+  TestServo servo;
+  TestNumber angle;
+  angle.traits.set_step(1.0f);
+  servo.configure();
+  servo.set_angle_number(&angle);
+
+  feed_stable_feedback(servo, 500);  // 0°
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  feed_stable_feedback(servo, 503);  // 0.88°, inside the deadband
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  feed_stable_feedback(servo, 504);  // 1.17°, still inside the deadband
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  feed_stable_feedback(servo, 511);  // 3.22°
+  EXPECT_FLOAT_EQ(angle.state, 3.0f);
+}
+
+TEST(FTServoTest, AngleNumberQuantizesIdleFeedbackToTheNumberStep) {
+  TestServo servo;
+  TestNumber angle;
+  angle.traits.set_step(5.0f);
+  servo.configure();
+  servo.set_angle_number(&angle);
+
+  feed_stable_feedback(servo, 500);  // 0°
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  feed_stable_feedback(servo, 511);  // 3.22°, below one 5° step
+  EXPECT_FLOAT_EQ(angle.state, 0.0f);
+
+  feed_stable_feedback(servo, 530);  // 8.79° -> 10° step
+  EXPECT_FLOAT_EQ(angle.state, 10.0f);
+
+  feed_stable_feedback(servo, 540);  // 11.72°, inside the deadband
+  EXPECT_FLOAT_EQ(angle.state, 10.0f);
+
+  feed_stable_feedback(servo, 560);  // 17.58° -> 20° step
+  EXPECT_FLOAT_EQ(angle.state, 20.0f);
+}
+
+TEST(FTServoTest, AngleNumberClampsToTheNumberRange) {
+  TestServo servo;
+  TestNumber angle;
+  angle.traits.set_step(5.0f);
+  angle.traits.set_min_value(-10.0f);
+  angle.traits.set_max_value(10.0f);
+  servo.configure();
+  servo.set_angle_number(&angle);
+
+  feed_stable_feedback(servo, 480);  // -5.86° -> -5°
+  EXPECT_FLOAT_EQ(angle.state, -5.0f);
+
+  feed_stable_feedback(servo, 450);  // -14.65° -> -15°, clamped to -10°
+  EXPECT_FLOAT_EQ(angle.state, -10.0f);
+}
+
+TEST(FTServoTest, AngleNumberCanBeCommandOnly) {
+  TestServo servo;
+  TestNumber angle;
+  angle.traits.set_step(5.0f);
+  servo.configure();
+  servo.set_angle_number(&angle);
+  servo.set_angle_follow_feedback(false);
+
+  ASSERT_TRUE(servo.move_to_angle(30.0f));
+  EXPECT_FLOAT_EQ(angle.state, 30.0f);
+
+  // Without follow_feedback the measured angle must not overwrite the target.
+  feed_stable_feedback(servo, 620);
+  EXPECT_FLOAT_EQ(angle.state, 30.0f);
 }
 
 TEST(FTServoGroupTest, SendsAllGoalsInOneBatch) {

@@ -19,6 +19,8 @@ from .. import CONF_FTSERVO_ID, FTSERVO_BASE_SCHEMA
 CODEOWNERS = ["@m5stack"]
 DEPENDENCIES = ["ftservo"]
 
+CONF_FOLLOW_FEEDBACK = "follow_feedback"
+
 POSITION_SCHEMA = number.number_schema(
     number.ApplyNumber,
     icon="mdi:gamepad",
@@ -40,6 +42,7 @@ ANGLE_SCHEMA = number.number_schema(
         cv.Optional(CONF_MIN_VALUE, default=0.0): cv.float_,
         cv.Optional(CONF_MAX_VALUE, default=360.0): cv.float_,
         cv.Optional(CONF_STEP, default=1.0): cv.positive_not_null_float,
+        cv.Optional(CONF_FOLLOW_FEEDBACK, default=True): cv.boolean,
     }
 )
 
@@ -107,6 +110,7 @@ async def to_code(config: ConfigType) -> None:
             step=conf[CONF_STEP],
             apply="move_to_angle(value)",
         )
+        cg.add(servo.set_angle_follow_feedback(conf[CONF_FOLLOW_FEEDBACK]))
     if (conf := config.get(CONF_SPEED)) is not None:
         await numbers(
             CONF_SPEED,

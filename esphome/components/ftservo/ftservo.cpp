@@ -1,5 +1,7 @@
 #include "ftservo.h"
 
+#include <algorithm>
+
 #include "esphome/core/application.h"
 #include "esphome/core/progmem.h"
 
@@ -10,7 +12,8 @@ ESPHOME_LOG_TAG(TAG, "ftservo");
 static constexpr uint16_t STEPS_PER_REVOLUTION = 1024;
 static constexpr uint32_t MOVE_SLACK_MS = 500;
 static constexpr uint32_t REQUEST_TIMEOUT_MS = 1000;
-static constexpr float ANGLE_DEADBAND_DEGREES = 1.0f;
+static constexpr uint16_t FEEDBACK_STABLE_STEPS = 3;
+static constexpr float MIN_ANGLE_DEADBAND_DEGREES = 2.0f;
 
 PROGMEM_STRING_TABLE(ServoStateString, "IDLE", "MOVING", "HOLDING", "STALLED", "ERROR");
 
@@ -68,6 +71,9 @@ void FTServo::dump_config() {
                 this->max_position_, YESNO(this->inverted_), YESNO(this->release_after_move_));
   ESP_LOGCONFIG(TAG, "  Default speed: %u steps/s, default time: %u ms, update interval: %u ms", this->default_speed_,
                 this->default_time_, static_cast<unsigned>(this->update_interval_ms_));
+#ifdef USE_NUMBER
+  ESP_LOGCONFIG(TAG, "  Angle number follows feedback: %s", YESNO(this->angle_follow_feedback_));
+#endif
   ESP_LOGCONFIG(
       TAG, "  State: %s",
       LOG_STR_ARG(ServoStateString::get_log_str(static_cast<uint8_t>(this->state_), ServoStateString::LAST_INDEX)));
@@ -100,6 +106,8 @@ bool FTServo::move_to(int position, uint16_t speed, uint16_t time) {
 #ifdef USE_NUMBER
   // The angle number is a control, not a progress display: hold the commanded
   // angle until the move finishes instead of jumping to the old measured angle.
+  this->feedback_window_count_ = 0;
+  this->feedback_window_index_ = 0;
   this->publish_angle_number_(this->position_to_angle_(target), true);
 #endif
   this->update_errors_();
@@ -150,12 +158,11 @@ void FTServo::stop() {
   this->state_ = ServoState::SERVO_STATE_HOLDING;
   this->motion_error_ = SERVO_ERROR_NONE;
   this->update_errors_();
-  if (was_moving) {
 #ifdef USE_NUMBER
-    // The move is over; snap the control to the measured value so a later
-    // manual nudge starts from where the head actually is.
-    this->publish_angle_number_(this->position_to_angle_(this->feedback_.position), true);
+  this->feedback_window_count_ = 0;
+  this->feedback_window_index_ = 0;
 #endif
+  if (was_moving) {
     this->on_move_done_.call();
   }
 }
@@ -275,10 +282,10 @@ void FTServo::publish_feedback_() {
   if (this->capabilities_ & SERVO_CAPABILITIES_POSITION) {
     PUBLISH_STATE(this->position_number_, static_cast<float>(feedback.position));
     // While moving, the angle number keeps the commanded target set by
-    // move_to(); publishing the intermediate feedback makes the control chase
-    // the servo and adds a large jump at the start and end of every move.
-    if (this->state_ != ServoState::SERVO_STATE_MOVING) {
-      this->publish_angle_number_(this->position_to_angle_(feedback.position), false);
+    // move_to(). Idle feedback is only applied once it has been stable for a
+    // few samples, so a hand-moved head updates the control without jitter.
+    if (this->state_ != ServoState::SERVO_STATE_MOVING && this->angle_follow_feedback_) {
+      this->publish_feedback_angle_(feedback.position);
     }
   } else {
     PUBLISH_STATE(this->position_number_, NAN);
@@ -292,12 +299,53 @@ void FTServo::publish_angle_number_(float angle, bool force) {
   if (this->angle_number_ == nullptr || std::isnan(angle)) {
     return;
   }
-  if (!force && !std::isnan(this->last_published_angle_) &&
-      std::fabs(angle - this->last_published_angle_) < ANGLE_DEADBAND_DEGREES) {
+  float step = this->angle_number_->traits.get_step();
+  if (!std::isfinite(step) || step <= 0.0f) {
+    step = 1.0f;
+  }
+  float quantized = std::round(angle / step) * step;
+  const float min_value = this->angle_number_->traits.get_min_value();
+  const float max_value = this->angle_number_->traits.get_max_value();
+  if (std::isfinite(min_value) && std::isfinite(max_value)) {
+    // The step may not divide the configured range; keep the published value
+    // inside it so the UI never shows an out-of-range angle.
+    quantized = std::clamp(quantized, min_value, max_value);
+  }
+  if (!force && !std::isnan(this->last_published_angle_)) {
+    const float deadband = std::max(step, MIN_ANGLE_DEADBAND_DEGREES);
+    // Compare the measured angle with the displayed value, not with the
+    // quantized one: a raw value hovering at a step boundary would otherwise
+    // alternate between two adjacent steps.
+    if (std::fabs(angle - this->last_published_angle_) < deadband) {
+      return;
+    }
+  }
+  this->last_published_angle_ = quantized;
+  this->angle_number_->publish_state(quantized);
+}
+
+void FTServo::publish_feedback_angle_(uint16_t position) {
+  if (this->angle_number_ == nullptr) {
     return;
   }
-  this->last_published_angle_ = angle;
-  this->angle_number_->publish_state(std::round(angle));
+  this->feedback_window_[this->feedback_window_index_] = position;
+  this->feedback_window_index_ = static_cast<uint8_t>((this->feedback_window_index_ + 1) % FEEDBACK_WINDOW_SIZE);
+  if (this->feedback_window_count_ < FEEDBACK_WINDOW_SIZE) {
+    this->feedback_window_count_++;
+  }
+  if (this->feedback_window_count_ < FEEDBACK_WINDOW_SIZE) {
+    return;
+  }
+  const uint16_t a = this->feedback_window_[0];
+  const uint16_t b = this->feedback_window_[1];
+  const uint16_t c = this->feedback_window_[2];
+  const uint16_t min = std::min(a, std::min(b, c));
+  const uint16_t max = std::max(a, std::max(b, c));
+  if (max - min > FEEDBACK_STABLE_STEPS) {
+    return;
+  }
+  const uint16_t median = a + b + c - min - max;
+  this->publish_angle_number_(this->position_to_angle_(median), false);
 }
 #endif
 
@@ -307,11 +355,6 @@ void FTServo::complete_move_() {
   this->state_ = ServoState::SERVO_STATE_HOLDING;
   this->update_errors_();
   if (was_moving) {
-#ifdef USE_NUMBER
-    // The move is over; snap the control to the measured value so a later
-    // manual nudge starts from where the head actually is.
-    this->publish_angle_number_(this->position_to_angle_(this->feedback_.position), true);
-#endif
     this->on_move_done_.call();
   }
   if (this->release_after_move_) {

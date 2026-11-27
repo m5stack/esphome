@@ -101,6 +101,9 @@ class FTServo : public Component {
   void set_release_after_move(bool release_after_move) { this->release_after_move_ = release_after_move; }
   void set_update_interval(uint32_t update_interval_ms) { this->update_interval_ms_ = update_interval_ms; }
   void set_capabilities(ServoCapabilities capabilities) { this->capabilities_ = capabilities; }
+#ifdef USE_NUMBER
+  void set_angle_follow_feedback(bool follow_feedback) { this->angle_follow_feedback_ = follow_feedback; }
+#endif
 
   // Control, all non-blocking. A non-zero `time` takes precedence over `speed`.
   bool move_to(int position);
@@ -173,6 +176,7 @@ class FTServo : public Component {
   void complete_move_();
 #ifdef USE_NUMBER
   void publish_angle_number_(float angle, bool force);
+  void publish_feedback_angle_(uint16_t position);
 #endif
   void update_errors_();
 
@@ -210,7 +214,12 @@ class FTServo : public Component {
   bool release_after_move_{false};
   bool restore_pending_{true};
 #ifdef USE_NUMBER
+  static constexpr size_t FEEDBACK_WINDOW_SIZE = 3;
+  bool angle_follow_feedback_{true};
   float last_published_angle_{NAN};
+  uint16_t feedback_window_[FEEDBACK_WINDOW_SIZE]{};
+  uint8_t feedback_window_count_{0};
+  uint8_t feedback_window_index_{0};
 #endif
 };
 
